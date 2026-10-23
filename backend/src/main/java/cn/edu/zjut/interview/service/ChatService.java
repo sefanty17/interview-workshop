@@ -18,6 +18,7 @@ import cn.edu.zjut.interview.god.SpeakerSelector;
 import cn.edu.zjut.interview.llm.LlmClient;
 import cn.edu.zjut.interview.llm.LlmMessage;
 import cn.edu.zjut.interview.llm.LlmOptions;
+import cn.edu.zjut.interview.llm.ReplyLengthMode;
 import cn.edu.zjut.interview.prompt.InterviewPlan;
 import cn.edu.zjut.interview.prompt.MemoryBuilder;
 import cn.edu.zjut.interview.prompt.PlayerIdentityPrompt;
@@ -32,6 +33,7 @@ import cn.edu.zjut.interview.stream.EmotionDictionary;
 import cn.edu.zjut.interview.stream.EmotionSegment;
 import cn.edu.zjut.interview.stream.SentenceSplitter;
 import cn.edu.zjut.interview.stream.SymbolParser;
+import cn.edu.zjut.interview.worldbook.Worldbook;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
@@ -52,6 +54,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -90,6 +93,15 @@ public class ChatService {
 
     /** 上帝 Agent：多人对话的选人判定与轮数上限（单人场景不激活，零开销）。 */
     private final GodAgentCore godAgent;
+
+    /**
+     * 档位变更时的一次性 announce 文案（批次 4.4，对齐 take_temporary_memories 的 take 语义）：
+     * PUT 成功时 put，runTurn 取走即弃、不落库。重启丢失可接受（原版也是会话内存态）。
+     */
+    private final Map<Long, String> pendingAnnounce = new ConcurrentHashMap<>();
+
+    /** 上一轮台词条数越界时的纠偏文案，注入下一轮后取走即弃。 */
+    private final Map<Long, String> pendingCorrection = new ConcurrentHashMap<>();
 
     /** 已验收的拼装/分句组件，直接复用，不复制逻辑。 */
     private final MemoryBuilder memoryBuilder = new MemoryBuilder();
@@ -187,15 +199,19 @@ public class ChatService {
         saveMessage(session.getId(), 0, InterviewMessage.ROLE_SYSTEM, systemPrompt, null, null, null, null);
 
         // 5. 落开场白（seq=1，情绪从 opening 里解析，没有就「正常」）
+        //    自由对话（script == null）不再把开场白落库：开场白只是给前端看的欢迎语，
+        //    不进 LLM 记忆，之后 seq 自然从 max+1 起。剧本会话保留原行为。
         String opening = interviewer.getOpening() == null ? "" : interviewer.getOpening();
         List<EmotionSegment> segments = symbolParser.parse(opening);
         EmotionSegment first = segments.isEmpty() ? null : segments.get(0);
         String openingMessage = first == null ? opening.strip() : first.followingText();
         String openingEmotion = first == null
                 ? EmotionDictionary.getInstance().predict(null) : first.predicted();
-        saveMessage(session.getId(), 1, InterviewMessage.ROLE_ASSISTANT, opening,
-                first == null ? null : first.originalTag(), openingEmotion,
-                first == null ? null : first.motionText(), interviewerRoleId(interviewer));
+        if (script != null) {
+            saveMessage(session.getId(), 1, InterviewMessage.ROLE_ASSISTANT, opening,
+                    first == null ? null : first.originalTag(), openingEmotion,
+                    first == null ? null : first.motionText(), interviewerRoleId(interviewer));
+        }
 
         log.info("[ChatService] 建会话 id={} interviewer={} job={} systemPromptLength={}",
                 session.getId(), interviewerCode, jobId, systemPrompt.length());
@@ -287,6 +303,19 @@ public class ChatService {
                                     : scriptRepository.findById(session.getScriptId()).orElse(null))));
                 }
 
+                // 5.5 批次 4.3 世界书注入：每轮从当前 speaker 的 interviewer 重取、解析结果
+                // 每轮重算不缓存；第 1 轮 userInput = 玩家输入，第 2 轮起传 null
+                // （对齐原版 pre.rs:113-122 的语义）。
+                // 铁律：只改本轮请求副本，绝不写回台词表——messages 每轮重建，天然满足；
+                // 注入内容绝不 saveMessage。库列为空时 parse 返回 null，零开销跳过。
+                Worldbook worldbook = Worldbook.parse(speaker.getWorldbook());
+                if (worldbook != null) {
+                    worldbook.inject(messages, rounds == 0 ? main : null);
+                }
+
+                // 5.6 批次 4.4 一次性临时 system 注入（announce / 上一轮纠偏），取走即弃、不落库
+                injectPendingSystemMessages(messages, session.getId());
+
                 // 6~8. LlmClient.stream → SentenceSplitter → SymbolParser → 落库 + emit
                 ReplyPublisher publisher = new ReplyPublisher(emitter, session, speaker, userSeq);
                 SentenceSplitter splitter = new SentenceSplitter(
@@ -306,6 +335,14 @@ public class ChatService {
                 // 呈现栅栏：本轮所有 ai:reply 落完才允许收尾（本项目聊天链路暂无工具事件，
                 // publisher 是唯一的 emit 出口，顺序由此保证）
                 publisher.finish();
+
+                // 批次 4.4 纠偏：统计本轮实际落地台词条数，越界则把纠偏文案注入下一轮
+                // （取走即弃、不落库）；free 档 acceptedRange 为 null，correctionText 恒 null
+                ReplyLengthMode mode = ReplyLengthMode.fromStrLossy(session.getReplyLengthMode());
+                String correction = mode.correctionText(publisher.published());
+                if (correction != null) {
+                    pendingCorrection.put(session.getId(), correction);
+                }
 
                 rounds++;
                 consecutiveNpcRounds++;
@@ -342,6 +379,93 @@ public class ChatService {
             error.put("errorCode", errorCode);
             error.put("detail", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
             send(emitter, "ai:error", error);
+            send(emitter, "status:reset", Map.of());
+            emitter.complete();
+        }
+    }
+
+    // ───────────────────────── 批次 4.4：档位 HTTP 支持 + 调试指令 ─────────────────────────
+
+    /** 当前档位（{@code GET /api/chat/sessions/{id}/reply-length-mode}）。 */
+    public String getReplyLengthMode(Long sessionId) {
+        InterviewSession session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在：" + sessionId));
+        // 试玩会话整个状态都会在结束时还原，此时读取的档位没有意义（对齐 pending_preview_restore）
+        if (Boolean.TRUE.equals(session.isPreview())) {
+            return null;
+        }
+        return ReplyLengthMode.fromStrLossy(session.getReplyLengthMode()).asStr();
+    }
+
+    /**
+     * 修改档位（{@code PUT /api/chat/sessions/{id}/reply-length-mode}）：
+     * 非法值 400、试玩会话 409；成功后把 announce 文案挂进 take 语义的临时表，
+     * 下一轮 runTurn 取走即弃（不落库、不写历史）。
+     */
+    public String setReplyLengthMode(Long sessionId, String rawMode) {
+        InterviewSession session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在：" + sessionId));
+        if (Boolean.TRUE.equals(session.isPreview())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "试玩会话的档位会在结束时整体还原，不能修改");
+        }
+        ReplyLengthMode mode;
+        try {
+            mode = ReplyLengthMode.parseStrict(rawMode);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+        session.setReplyLengthMode(mode.asStr());
+        sessionRepository.save(session);
+        pendingAnnounce.put(sessionId, mode.announceText());
+        return mode.asStr();
+    }
+
+    /**
+     * 把 pending 的 announce / 纠偏文案作为一次性临时 system 注入本轮 messages。
+     * 插在首条 system 之后（没有 system 就插在最前），不落库；取走即弃。
+     */
+    private void injectPendingSystemMessages(List<LlmMessage> messages, Long sessionId) {
+        String announce = pendingAnnounce.remove(sessionId);
+        String correction = pendingCorrection.remove(sessionId);
+        if (announce == null && correction == null) {
+            return;
+        }
+        int at = 0;
+        if (!messages.isEmpty() && LlmMessage.ROLE_SYSTEM.equals(messages.get(0).role())) {
+            at = 1;
+        }
+        if (announce != null) {
+            messages.add(at, LlmMessage.system(announce));
+        }
+        if (correction != null) {
+            messages.add(at, LlmMessage.system(correction));
+        }
+    }
+
+    /**
+     * 调试指令（对齐 {@code api/chat.rs:301-347}）：仅在后端日志输出，不发往前端。
+     *
+     * <p>实现差异说明：原版桌面端没有「前端等流式事件」的问题，本项目前端在等
+     * SSE 流，处理完不发 {@code status:reset} 前端会永久停在「思考中」，故打完后补发。
+     * 指令本身不落库（对齐原版调试指令不进台词列表）。
+     */
+    private void handleDebugCommand(InterviewSession session, Interviewer interviewer,
+                                    String text, SseEmitter emitter) {
+        try {
+            if ("/查看记忆".equals(text)) {
+                List<InterviewMessage> history =
+                        messageRepository.findBySessionIdOrderBySeqAsc(session.getId());
+                log.info("=== 角色记忆 [{}] (session_id={}) ===",
+                        interviewer.getName(), session.getId());
+                for (LlmMessage message : memoryBuilder.build(history)) {
+                    log.info("[{}] {}", message.role(), message.content());
+                }
+            } else {
+                // 对齐 chat.rs:478 的未知指令文案
+                log.warn("未知调试指令: {}。可用指令: /查看记忆", text);
+            }
+        } finally {
             send(emitter, "status:reset", Map.of());
             emitter.complete();
         }

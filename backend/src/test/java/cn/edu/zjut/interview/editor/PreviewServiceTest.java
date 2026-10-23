@@ -168,7 +168,8 @@ class PreviewServiceTest {
         previewService.discard(realId);
 
         assertTrue(sessionRepository.findById(realId).isPresent(), "真实场次不能被试玩的 discard 删掉");
-        assertEquals(2, messageRepository.findBySessionIdOrderBySeqAsc(realId).size(),
+        // 自由会话（批次 4.1 起）建场只落 system 一条（开场白不再落库）
+        assertEquals(1, messageRepository.findBySessionIdOrderBySeqAsc(realId).size(),
                 "真实场次的台词也不能被删");
         // 不存在的 id 同样是静默 no-op（退出试玩这条路不该 500）
         previewService.discard(-1L);

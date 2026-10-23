@@ -42,6 +42,10 @@
           <span class="text-white/40">·</span>
           <span class="font-mono tabular-nums text-white/85">{{ timerText }}</span>
         </div>
+        <!-- 批次 4.5：自由对话模式的评分说明（与现有提示文案同款样式） -->
+        <div v-if="!isScript" class="mt-1 text-xs text-white/60">
+          自由对话模式 · 本模式不产生评分，仅用于对话体验
+        </div>
         <div v-if="isScript" class="mt-2 ml-auto h-[3px] w-40 overflow-hidden rounded-full bg-white/15">
           <div class="h-full rounded-full bg-[#79d9ff] transition-all duration-500" :style="{ width: (scriptChapter ? scriptProgressPct : progress) + '%' }" />
         </div>

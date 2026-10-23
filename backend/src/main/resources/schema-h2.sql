@@ -204,6 +204,10 @@ ALTER TABLE interview_message ADD COLUMN IF NOT EXISTS sender_role_id INT;
 ALTER TABLE interview_message ADD COLUMN IF NOT EXISTS identity_id  VARCHAR(64);
 ALTER TABLE interview_message ADD COLUMN IF NOT EXISTS display_name VARCHAR(64);
 ALTER TABLE interview_script  ADD COLUMN IF NOT EXISTS characters CLOB;
+-- 世界书：随角色卡的动态背景资料（批次 4.3）
+ALTER TABLE interviewer       ADD COLUMN IF NOT EXISTS worldbook CLOB;
+-- 回复台词数量档位（批次 4.4，对齐 reply_length.mode）
+ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS reply_length_mode VARCHAR(16) DEFAULT 'normal';
 -- 剧本编辑器：覆盖前留最近一份备份（对齐原版 <章节目录>.yaml.bak 的语义）
 ALTER TABLE interview_chapter ADD COLUMN IF NOT EXISTS events_backup CLOB;
 

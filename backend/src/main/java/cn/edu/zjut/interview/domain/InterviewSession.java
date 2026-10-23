@@ -79,6 +79,14 @@ public class InterviewSession {
     @Column(name = "present_role_ids", length = 256)
     private String presentRoleIds;
 
+    /**
+     * 回复台词数量档位（对齐原版存档全局变量 {@code reply_length.mode}）。
+     * 对应物说明：原版存在「存档全局变量」里，本项目的对应物是 session 行——
+     * 跟随会话生命周期，会话没了档位也没了。取值 short/normal/free，缺省 normal。
+     */
+    @Column(name = "reply_length_mode", length = 16)
+    private String replyLengthMode = "normal";
+
     public Long getId() {
         return id;
     }
@@ -213,5 +221,13 @@ public class InterviewSession {
 
     public void setPresentRoleIds(String presentRoleIds) {
         this.presentRoleIds = presentRoleIds;
+    }
+
+    public String getReplyLengthMode() {
+        return replyLengthMode;
+    }
+
+    public void setReplyLengthMode(String replyLengthMode) {
+        this.replyLengthMode = replyLengthMode;
     }
 }

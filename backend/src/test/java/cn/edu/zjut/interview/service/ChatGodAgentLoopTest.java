@@ -91,13 +91,14 @@ class ChatGodAgentLoopTest {
                 new CreateSessionRequest("strict", "java", null));
 
         chatService.processMessage(created.sessionId(), "我叫蔡智豪");
-        List<InterviewMessage> messages = waitUntilSettled(created.sessionId(), 4);
+        // 自由会话（批次 4.1 起）不再落开场白：system + user + 1 条 assistant
+        List<InterviewMessage> messages = waitUntilSettled(created.sessionId(), 3);
 
         verify(llmClient, times(1)).stream(anyList(), any(LlmOptions.class), any());
         long assistantCount = messages.stream()
                 .filter(m -> InterviewMessage.ROLE_ASSISTANT.equals(m.getRole())).count();
-        // 建会话落了一条开场白，本轮只再落一条
-        assertEquals(2, assistantCount, "单人场景一轮只能落一条 assistant 台词");
+        // 建会话不再落开场白，本轮只落一条
+        assertEquals(1, assistantCount, "单人场景一轮只能落一条 assistant 台词");
         assertEquals(strict.getId().intValue(),
                 messages.get(messages.size() - 1).getSenderRoleId());
     }
@@ -126,7 +127,8 @@ class ChatGodAgentLoopTest {
                         "tool_calls", null));
 
         chatService.processMessage(sessionId, "我叫蔡智豪");
-        List<InterviewMessage> messages = waitUntilSettled(sessionId, 6);
+        // 自由会话不再落开场白：system + user + 3 轮 assistant
+        List<InterviewMessage> messages = waitUntilSettled(sessionId, 5);
 
         // 预算 3 轮：第 1 轮面试官 → 第 2/3 轮接话者 → 到顶收尾
         verify(llmClient, times(3)).stream(anyList(), any(LlmOptions.class), any());

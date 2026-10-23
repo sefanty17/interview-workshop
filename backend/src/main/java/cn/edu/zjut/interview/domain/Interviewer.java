@@ -46,6 +46,13 @@ public class Interviewer {
     @Column(name = "example_dialogue", columnDefinition = "CLOB")
     private String exampleDialogue;
 
+    /**
+     * 世界书（对齐角色卡目录里的 {@code worldbook.yml}）：整份 YAML 文本原样存库。
+     * 空 = 不注入，行为与没有世界书时完全一致。
+     */
+    @Column(name = "worldbook", columnDefinition = "CLOB")
+    private String worldbook;
+
     @Column(name = "thinking_message", length = 128)
     private String thinkingMessage;
 
@@ -156,6 +163,14 @@ public class Interviewer {
 
     public void setExampleDialogue(String exampleDialogue) {
         this.exampleDialogue = exampleDialogue;
+    }
+
+    public String getWorldbook() {
+        return worldbook;
+    }
+
+    public void setWorldbook(String worldbook) {
+        this.worldbook = worldbook;
     }
 
     public String getThinkingMessage() {

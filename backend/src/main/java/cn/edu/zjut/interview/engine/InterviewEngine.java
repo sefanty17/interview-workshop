@@ -446,32 +446,9 @@ public class InterviewEngine {
         InterviewSession session = load(sessionId);
         session.setStatus(STATUS_FINISHED);
         session.setEndedAt(LocalDateTime.now());
-        int score = scoreOf(sessionId);
-        session.setScore(score);
+        // 批次 4.2：不再用写死公式算分，score 留空（结束报告分数由大模型评估管线后续接管）
         sessionRepository.save(session);
-        return new SessionFinishView(session.getId(), session.getStatus(), score);
-    }
-
-    /**
-     * 结束时的总分（规格 S5 改动 1，规则写死）：
-     * {@code clamp(60 + min(25, 5*n) + min(15, avgLen/40 整数部分), 0, 100)}，
-     * n 为「用户真实回答」条数（role=user 且 msgType 不是 narration 也不是 plot，即排除
-     * 引擎落库的旁白 narration 与剧情提示 plot 两类 msgType），avgLen 为这些真实回答的
-     * 平均字符长度（n=0 时取 0）。
-     */
-    private int scoreOf(Long sessionId) {
-        List<InterviewMessage> userMessages = messageRepository.findBySessionIdOrderBySeqAsc(sessionId)
-                .stream()
-                .filter(message -> InterviewMessage.ROLE_USER.equals(message.getRole()))
-                .filter(message -> !"narration".equals(message.getMsgType()) && !"plot".equals(message.getMsgType()))
-                .toList();
-        int n = userMessages.size();
-        long totalChars = userMessages.stream()
-                .mapToLong(message -> message.getContent() == null ? 0 : message.getContent().length())
-                .sum();
-        int avgLen = n == 0 ? 0 : (int) (totalChars / n);
-        int score = 60 + Math.min(25, 5 * n) + Math.min(15, avgLen / 40);
-        return Math.max(0, Math.min(100, score));
+        return new SessionFinishView(session.getId(), session.getStatus(), session.getScore());
     }
 
     public List<SessionSummaryView> list(String status) {
@@ -586,7 +563,7 @@ public class InterviewEngine {
         if (session.getEndedAt() == null) {
             session.setEndedAt(LocalDateTime.now());
         }
-        session.setScore(scoreOf(session.getId()));
+        // 批次 4.2：不再算分，score 留空
         sessionRepository.save(session);
         sendFinished(sink);
         log.info("[ScriptEngine] 会话 {} 剧本结束", session.getId());

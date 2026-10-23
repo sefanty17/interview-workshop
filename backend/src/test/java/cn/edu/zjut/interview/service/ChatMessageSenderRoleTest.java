@@ -63,13 +63,11 @@ class ChatMessageSenderRoleTest {
                 new CreateSessionRequest("strict", "java", null));
         Long sessionId = created.sessionId();
 
-        // 建会话已落两条：seq 0 = system 串，seq 1 = 开场白
+        // 自由对话（批次 4.1 起）建会话只落一条：seq 0 = system 串，开场白不再落库
         List<InterviewMessage> opening = messageRepository.findBySessionIdOrderBySeqAsc(sessionId);
+        assertEquals(1, opening.size(), "自由会话建场只落 system 一条");
         assertEquals(InterviewMessage.ROLE_SYSTEM, opening.get(0).getRole());
         assertNull(opening.get(0).getSenderRoleId(), "system 消息的 sender_role_id 必须是 null");
-        assertEquals(InterviewMessage.ROLE_ASSISTANT, opening.get(1).getRole());
-        assertEquals(interviewerId, opening.get(1).getSenderRoleId(),
-                "开场白是面试官说的，必须是 interviewer.id");
 
         // 发一条消息，等异步落库
         chatService.processMessage(sessionId, "我叫蔡智豪");
@@ -82,7 +80,7 @@ class ChatMessageSenderRoleTest {
                     && "我叫蔡智豪".equals(m.getContent()));
             long assistantCount = messages.stream()
                     .filter(m -> InterviewMessage.ROLE_ASSISTANT.equals(m.getRole())).count();
-            if (userSaved && assistantCount >= 2) {
+            if (userSaved && assistantCount >= 1) {
                 break;
             }
             assertTrue(System.currentTimeMillis() < deadline, "等待异步落库超时，当前消息数：" + messages.size());
@@ -95,7 +93,6 @@ class ChatMessageSenderRoleTest {
 
         List<InterviewMessage> assistantLines = messages.stream()
                 .filter(m -> InterviewMessage.ROLE_ASSISTANT.equals(m.getRole()))
-                .filter(m -> !m.getSeq().equals(1))
                 .toList();
         assertTrue(!assistantLines.isEmpty(), "本轮至少要落一条 assistant 台词");
         assistantLines.forEach(m -> assertEquals(interviewerId, m.getSenderRoleId(),
