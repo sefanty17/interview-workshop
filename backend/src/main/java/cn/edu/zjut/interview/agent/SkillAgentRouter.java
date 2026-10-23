@@ -107,29 +107,31 @@ public class SkillAgentRouter {
         }
     }
 
-    // ───────────────────────── 工具白名单（对应 role.rs 的 CHAT_TOOLS / DRAFT_TOOLS / task.tools()） ─────────────────────────
+    // ───────────────────────── 工具白名单 ─────────────────────────
 
-    /** 只读 + 技能 + 校验：闲聊与体检类。 */
-    public static final List<String> READ_TOOLS = List.of(
-            "list_skills", "read_skill", "validate_script", "list_files", "read_file");
-    /** 大纲/正文稿：只读 + 写写改改，但动不了能跑的章节。 */
-    public static final List<String> DRAFT_TOOLS = List.of(
-            "list_skills", "read_skill", "validate_script", "list_files", "read_file",
-            "write_file", "edit_file");
-    /** 全量：只有产出能跑章节的任务（含改章节）才拿得到，删除能力也只在这里。 */
-    public static final List<String> ALL_TOOLS = List.of(
-            "list_skills", "read_skill", "validate_script", "list_files", "read_file",
-            "write_file", "edit_file", "delete_file");
+    /**
+     * 任务类型 → 角色。
+     *
+     * <p>两层结构：{@code TaskKind} 回答"用户想干什么"，{@link Role} 回答"这件事该谁去做"。
+     * 不推翻原有 {@code TaskKind}，只多一次查表，已有路由逻辑不动。
+     */
+    public static Role roleFor(TaskKind kind) {
+        return switch (kind) {
+            case CHAT, SUMMARIZE, COLLECT, CHECK_ASSETS -> Role.DEMANDER;
+            case OUTLINE, REVISE_OUTLINE, DRAFT_CHAPTER -> Role.WRITER;
+            case WRITE_CHAPTER, REVISE_CHAPTER -> Role.TRANSFORMER;
+            case POLISH -> Role.OPTIMIZER;
+        };
+    }
 
-    /** 权限按任务给（对齐 {@code core.rs::item_tools}）：任务的产物是什么，就只给写什么的那套工具。 */
+    /**
+     * 权限按角色给：角色的产物是什么，就只给写什么的那套工具。
+     *
+     * <p><b>四个角色一律不含 {@code read_skill}</b>——原版刻意关掉的口子，开了模型就会
+     * 在写剧本时跑去查别的角色手册，两套规范在同一个请求里打架。
+     */
     public static List<String> toolsFor(TaskKind kind) {
-        if (kind.producesRunnableChapters()) {
-            return ALL_TOOLS;
-        }
-        if (kind.draftsIntoAgentDir()) {
-            return DRAFT_TOOLS;
-        }
-        return READ_TOOLS;
+        return roleFor(kind).tools();
     }
 
     // ───────────────────────── 计划 ─────────────────────────

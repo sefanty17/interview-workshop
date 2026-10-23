@@ -27,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -81,6 +82,44 @@ public class SkillAgentService {
 
     /** 反推剧本 key 用的路径标记（原版 {@code db.rs} 的 {@code like("%/scripts/%")}）。 */
     private static final String SCRIPT_PATH_MARKER = "/scripts/";
+
+    /**
+     * 边界底线（对齐 {@code core.rs::BOUNDARY_BASELINE = include_str!("prompts/role_boundary_baseline.md")}）。
+     *
+     * <p>四个角色共用同一份，且必须在 system prompt <b>最前面</b>：它是"没让你做的别做"这一条
+     * 硬约束，任何角色的流程描述都不能覆盖它。用 {@link Class#getResourceAsStream} 读，
+     * 因为它要跟着 jar 走（资源目录里的 .md 会被打进 jar，用 {@link Path} 读不到）。
+     */
+    private static final String BOUNDARY_BASELINE = loadClasspathText("/agent/prompts/role_boundary_baseline.md");
+
+    /**
+     * 边界补充的长度上限（对齐 {@code role.rs::BOUNDARY_MAX_CHARS}，按<b>字符</b>数不是字节数）。
+     *
+     * <p>给 {@code sanitize_boundary()} 用：角色可以补一句"更谨慎"的边界，但补的那句超长、
+     * 或出现"顺便/也把/补上"这类放宽词，整条补充丢弃、只用底线。当前在 {@link Role} 里统一实现。
+     */
+    static final int BOUNDARY_MAX_CHARS = 40;
+
+    /** 一出现就说明它在给自己放宽范围，整条补充丢弃（对齐 {@code role.rs::BOUNDARY_FORBIDDEN}）。 */
+    static final String[] BOUNDARY_FORBIDDEN = {"顺便", "也把", "补上", "一起写", "直接写完", "不用问"};
+
+    /**
+     * 读 classpath 上的文本资源；读不到返回空串（缺文件不该让整轮崩掉）。
+     *
+     * <p>静态初始化用，不能依赖注入进来的 ObjectMapper / 配置。
+     */
+    private static String loadClasspathText(String resource) {
+        try (var in = SkillAgentService.class.getResourceAsStream(resource)) {
+            if (in == null) {
+                log.warn("[SkillAgentService] 缺资源 {}", resource);
+                return "";
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            log.warn("[SkillAgentService] 读资源失败 {}：{}", resource, e.toString());
+            return "";
+        }
+    }
 
     /** 默认系统提示（config.systemPrompt 为空时使用）。 */
     private static final String DEFAULT_SYSTEM_PROMPT = """
@@ -520,7 +559,7 @@ public class SkillAgentService {
         // 消息表：system + 历史 + 本轮任务书
         List<SkillAgentLlmClient.Msg> messages = new ArrayList<>();
         messages.add(SkillAgentLlmClient.Msg.system(
-                buildSystemPrompt(config, allowed, sandboxDir, skillsDir)));
+                buildSystemPrompt(config, allowed, sandboxDir, skillsDir, SkillAgentRouter.roleFor(kind))));
         for (AgentMessage row : messageRepository.findByConversationIdOrderByIdAsc(conversationId)) {
             // 只回放 user / assistant 的正文；tool 行靠工具调用重新产生，不进上下文
             if (!"user".equals(row.getRole()) && !"assistant".equals(row.getRole())) {
@@ -640,20 +679,61 @@ public class SkillAgentService {
     }
 
     /** 系统提示：用户自定义优先，补本轮工具白名单、沙箱位置与技能清单。 */
+    /**
+     * 拼本轮 system prompt。
+     *
+     * <p>结构（顺序是硬约束，边界底线必须在最前面 —— 流程描述覆盖不了它）：
+     * <ol>
+     *   <li>边界底线（代码写死，{@code role_boundary_baseline.md}）</li>
+     *   <li>本角色唯一预注入的手册（{@link Role#doc()}，只这一本）</li>
+     *   <li>本轮可用工具 / 沙箱路径说明</li>
+     * </ol>
+     *
+     * <p><b>不列出全部技能</b>：原版把"有哪些技能"整个从 prompt 里拿掉了。列出来模型就知道
+     * "还有别的路可以走"，会试图去读别的手册，两套规范在同一个请求里打架。
+     */
     private String buildSystemPrompt(SkillAgentConfig config, List<String> allowed,
-                                     Path sandboxDir, Path skillsDir) {
+                                     Path sandboxDir, Path skillsDir, Role role) {
         StringBuilder sb = new StringBuilder();
-        if (config.getSystemPrompt() != null && !config.getSystemPrompt().isBlank()) {
-            sb.append(config.getSystemPrompt().strip()).append("\n\n");
-        } else {
-            sb.append(DEFAULT_SYSTEM_PROMPT).append("\n\n");
+
+        // 1. 边界底线：代码写死，流程 Agent 不得覆盖
+        sb.append(BOUNDARY_BASELINE.strip()).append("\n\n");
+
+        // 2. 本角色手册：只注入自己那本
+        if (role != null) {
+            String doc = readSkillDoc(skillsDir, role.doc());
+            if (doc != null && !doc.isBlank()) {
+                sb.append(doc.strip()).append("\n\n");
+            } else {
+                log.warn("[SkillAgentService] 角色 {} 的手册缺失：{}", role.label(), role.doc());
+            }
+            sb.append("本轮你扮演的是「").append(role.label()).append("」。\n");
         }
+
+        // 3. 运行环境
         sb.append("本轮可用工具：").append(String.join(" / ", allowed)).append("。\n");
         sb.append("文件工具的沙箱根目录是 ").append(sandboxDir)
                 .append("，相对路径都相对它解析；不要访问沙箱之外的路径。\n");
         sb.append("技能库存放在 ").append(skillsDir).append("。\n");
-        sb.append(SkillAgentTools.buildSkillsXml(SkillAgentTools.findAllSkills(skillsDir)));
         return sb.toString();
+    }
+
+    /** 读某个角色手册的正文；文件不存在返回 null（不抛，缺手册不该让整轮崩掉）。 */
+    private String readSkillDoc(Path skillsDir, String relative) {
+        Path file = skillsDir.resolve(relative).normalize();
+        if (!file.startsWith(skillsDir.normalize())) {
+            log.warn("[SkillAgentService] 手册路径越界，已拒绝：{}", relative);
+            return null;
+        }
+        if (!Files.isRegularFile(file)) {
+            return null;
+        }
+        try {
+            return Files.readString(file, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            log.warn("[SkillAgentService] 读手册失败 {}：{}", file, e.toString());
+            return null;
+        }
     }
 
     /** 工具调用列表 → {@code tool_calls} 列的 JSON（deriveScriptKey 反推剧本 key 靠这个列）。 */
