@@ -13,6 +13,8 @@ import cn.edu.zjut.interview.dto.CreateSessionRequest;
 import cn.edu.zjut.interview.dto.CreateSessionResponse;
 import cn.edu.zjut.interview.dto.ReplyEvent;
 import cn.edu.zjut.interview.dto.SessionMessageView;
+import cn.edu.zjut.interview.god.GodAgentCore;
+import cn.edu.zjut.interview.god.SpeakerSelector;
 import cn.edu.zjut.interview.llm.LlmClient;
 import cn.edu.zjut.interview.llm.LlmMessage;
 import cn.edu.zjut.interview.llm.LlmOptions;
@@ -86,6 +88,9 @@ public class ChatService {
     /** 身份/关系块渲染（玩家块 + 其他角色块）。 */
     private final PlayerIdentityPrompt identityPrompt;
 
+    /** 上帝 Agent：多人对话的选人判定与轮数上限（单人场景不激活，零开销）。 */
+    private final GodAgentCore godAgent;
+
     /** 已验收的拼装/分句组件，直接复用，不复制逻辑。 */
     private final MemoryBuilder memoryBuilder = new MemoryBuilder();
     private final SymbolParser symbolParser = new SymbolParser();
@@ -111,7 +116,8 @@ public class ChatService {
                        LlmClient llmClient,
                        ConfigService configService,
                        ObjectMapper objectMapper,
-                       PlayerIdentityService playerIdentities) {
+                       PlayerIdentityService playerIdentities,
+                       GodAgentCore godAgent) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.interviewerRepository = interviewerRepository;
@@ -123,6 +129,7 @@ public class ChatService {
         this.objectMapper = objectMapper;
         this.playerIdentities = playerIdentities;
         this.identityPrompt = new PlayerIdentityPrompt(objectMapper);
+        this.godAgent = godAgent;
     }
 
     @PreDestroy
@@ -169,6 +176,8 @@ public class ChatService {
         session.setScriptId(script == null ? null : script.getId());
         session.setJobCode(jobId);
         session.setStatus("running");
+        // 在场角色：默认只有主面试官（多人由 setPresentRoleIds 追加）
+        session.setPresentRoleIds(String.valueOf(interviewer.getId()));
         session.setEventSequence(0);
         session.setStartedAt(LocalDateTime.now());
         session.setCreatedAt(LocalDateTime.now());
@@ -230,6 +239,17 @@ public class ChatService {
         return emitter;
     }
 
+    /**
+     * 一轮对话（对齐 {@code generator/mod.rs:140-201} 的生成循环）。
+     *
+     * <p>原来是「存 user → 取历史 → 流式 → 完」一条直线；多人编排后改成循环：
+     * 每轮生成完交给上帝 Agent 决定「下一个说话的是谁」，选到 NPC 就再跑一轮，
+     * 选到玩家（或轮数到顶 / 上帝 Agent 未激活）就收尾。
+     *
+     * <p><b>单人面试走的是完全相同的代码路径</b>：{@code present_role_ids} 里只有一个
+     * 面试官，{@code shouldActivate} 为假，循环第一次就 break —— 请求条数与落库内容与
+     * 改造前逐字一致（验收见 {@code ChatGodAgentLoopTest}）。
+     */
     private void runTurn(InterviewSession session, Interviewer interviewer, String text, SseEmitter emitter) {
         try {
             // 2. 首条 system 缺失 → 现场补一条（防老数据）
@@ -247,33 +267,72 @@ public class ChatService {
             thinking.put("duration", 0);
             send(emitter, "ai:thinking", thinking);
 
-            // 5. 读全部消息 → MemoryBuilder
-            List<InterviewMessage> history = messageRepository.findBySessionIdOrderBySeqAsc(session.getId());
-            List<LlmMessage> messages = memoryBuilder.build(history);
-
-            // 6~8. LlmClient.stream → SentenceSplitter → SymbolParser → 落库 + emit
-            // 生成参数每轮从 ConfigService 读一次（规格 B4-BE §三），不在这里直接读 yml
             LlmOptions options = LlmOptions.from(configService);
-            ReplyPublisher publisher = new ReplyPublisher(emitter, session, interviewer, userSeq);
-            SentenceSplitter splitter = new SentenceSplitter(
-                    configService.getInt(ConfigKey.CHAT_MERGE_THRESHOLD),
-                    configService.getInt(ConfigKey.CHAT_REPLY_COUNT));
-            llmClient.stream(messages, options, chunk -> {
-                for (SentenceSplitter.Sentence sentence : splitter.feed(chunk)) {
+            StringBuilder accumulated = new StringBuilder();
+            Interviewer speaker = interviewer;
+            int consecutiveNpcRounds = 0;
+            int rounds = 0;
+
+            while (true) {
+                // 5. 读全部消息 → MemoryBuilder（每轮重读：上一轮刚落的台词要进下一轮的上下文）
+                List<InterviewMessage> history = messageRepository.findBySessionIdOrderBySeqAsc(session.getId());
+                // 第 2 轮起换人说话，system 串必须换成那位面试官的（第 1 轮沿用库里那条，
+                // 保证单人场景逐字不变）
+                List<LlmMessage> messages = memoryBuilder.build(history);
+                if (rounds > 0 && !messages.isEmpty()
+                        && LlmMessage.ROLE_SYSTEM.equals(messages.get(0).role())) {
+                    messages.set(0, LlmMessage.system(buildSystemPrompt(speaker,
+                            userProfileRepository.findFirstByOrderByIdAsc().orElse(null),
+                            session.getScriptId() == null ? null
+                                    : scriptRepository.findById(session.getScriptId()).orElse(null))));
+                }
+
+                // 6~8. LlmClient.stream → SentenceSplitter → SymbolParser → 落库 + emit
+                ReplyPublisher publisher = new ReplyPublisher(emitter, session, speaker, userSeq);
+                SentenceSplitter splitter = new SentenceSplitter(
+                        configService.getInt(ConfigKey.CHAT_MERGE_THRESHOLD),
+                        configService.getInt(ConfigKey.CHAT_REPLY_COUNT));
+                llmClient.stream(messages, options, chunk -> {
+                    for (SentenceSplitter.Sentence sentence : splitter.feed(chunk)) {
+                        accumulated.append(sentence.text());
+                        publisher.offer(sentence);
+                    }
+                });
+                // 收尾句：SentenceSplitter 的 finish() 给出最后一段
+                for (SentenceSplitter.Sentence sentence : splitter.finish()) {
+                    accumulated.append(sentence.text());
                     publisher.offer(sentence);
                 }
-            });
-            // 收尾句：SentenceSplitter 的 finish() 给出最后一段
-            for (SentenceSplitter.Sentence sentence : splitter.finish()) {
-                publisher.offer(sentence);
-            }
-            publisher.finish();
+                // 呈现栅栏：本轮所有 ai:reply 落完才允许收尾（本项目聊天链路暂无工具事件，
+                // publisher 是唯一的 emit 出口，顺序由此保证）
+                publisher.finish();
 
-            // 9. 流结束：status:reset
+                rounds++;
+                consecutiveNpcRounds++;
+                int nextRoleId = postSelect(session, speaker, consecutiveNpcRounds, history, options);
+                if (nextRoleId == 0) {
+                    break;
+                }
+                Interviewer next = interviewerRepository.findById((long) nextRoleId).orElse(null);
+                if (next == null) {
+                    log.warn("[ChatService] 上帝 Agent 选中的面试官 {} 不存在，本轮收尾", nextRoleId);
+                    break;
+                }
+                speaker = next;
+            }
+
+            // 9. 流结束：空回复兜底 + status:reset
+            // （对齐 generator/mod.rs:505-524：无正文要显式报错，否则前端一直停在「思考中」）
+            if (accumulated.toString().isBlank()) {
+                Map<String, Object> empty = new LinkedHashMap<>();
+                empty.put("errorCode", "LLM_EMPTY");
+                empty.put("detail", "模型没有返回任何内容，请再试一次");
+                send(emitter, "ai:error", empty);
+            }
             send(emitter, "status:reset", Map.of());
             emitter.complete();
-            log.info("[ChatService] 会话 {} 本轮结束：userSeq={} assistant={} 条",
-                    session.getId(), userSeq, publisher.published());
+            log.info("[ChatService] 会话 {} 本轮结束：userSeq={} 轮数={}",
+                    session.getId(), userSeq, rounds);
         } catch (Exception e) {
             // 10. 任何异常：ai:error + status:reset
             String errorCode = e instanceof LlmClient.LlmException llm && llm.isTimeout()
@@ -286,6 +345,70 @@ public class ChatService {
             send(emitter, "status:reset", Map.of());
             emitter.complete();
         }
+    }
+
+    // ───────────────────────── 上帝 Agent：选下一个说话的人 ─────────────────────────
+
+    /**
+     * 后处理：本轮生成完毕后，上帝 Agent 决定下一个说话者（对齐 {@code post.rs:49-86}）。
+     *
+     * @return 下一个发言的 role_id；{@code 0} = 交还玩家 / 不继续
+     */
+    private int postSelect(InterviewSession session, Interviewer speaker, int consecutiveNpcRounds,
+                            List<InterviewMessage> history, LlmOptions options) {
+        // 轮数到顶先判：原版顺序就是这样（先 budget 再 activate），顺序反了日志会骗人
+        if (!godAgent.withinNpcBudget(consecutiveNpcRounds)) {
+            log.info("[GodAgent] 连续 {} 轮 NPC 发言，强制返回玩家", consecutiveNpcRounds);
+            return 0;
+        }
+        if (!godAgent.shouldActivate(session)) {
+            return 0;
+        }
+        SpeakerSelector.SpeakerView view = SpeakerSelector.capture(
+                godAgent, session, history, interviewerRoleId(speaker), this::npcInfo);
+        SpeakerSelector.SpeakerDecision decision = SpeakerSelector.decideNextSpeaker(godAgent, view, options);
+        if (decision.roleId() == 0) {
+            return 0;
+        }
+        log.info("[GodAgent] post-select: role_id={}, name={}, reason={}",
+                decision.roleId(), decision.name(), decision.reason());
+        return decision.roleId();
+    }
+
+    /** role_id → 在场面试官展示信息；查不到时 {@code SpeakerSelector} 会用「角色<id>」兜底。 */
+    private SpeakerSelector.NpcInfo npcInfo(int roleId) {
+        return interviewerRepository.findById((long) roleId)
+                .map(interviewer -> new SpeakerSelector.NpcInfo(roleId, interviewer.getName(),
+                        interviewer.getSubtitle() == null ? "" : interviewer.getSubtitle(),
+                        interviewer.getCardInfo() == null ? "" : interviewer.getCardInfo()))
+                .orElse(null);
+    }
+
+    /**
+     * 设置场上的面试官（对齐 {@code present_role_ids}）。
+     *
+     * <p>目前没有 HTTP 入口（前端还没有「加第二位面试官」的界面），先留服务层方法：
+     * 建会话默认只放主面试官，加人后 {@code shouldActivate} 才可能为真。
+     */
+    public List<Integer> setPresentRoleIds(Long sessionId, List<Integer> roleIds) {
+        InterviewSession session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在：" + sessionId));
+        StringBuilder joined = new StringBuilder();
+        for (Integer roleId : roleIds == null ? List.<Integer>of() : roleIds) {
+            if (roleId == null || roleId <= 0) {
+                continue;
+            }
+            if (!interviewerRepository.existsById((long) roleId)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "面试官不存在：" + roleId);
+            }
+            if (joined.length() > 0) {
+                joined.append(',');
+            }
+            joined.append(roleId);
+        }
+        session.setPresentRoleIds(joined.toString());
+        sessionRepository.save(session);
+        return godAgent.npcIds(session);
     }
 
     /**

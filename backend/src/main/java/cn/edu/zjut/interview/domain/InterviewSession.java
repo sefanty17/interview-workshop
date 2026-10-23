@@ -68,6 +68,17 @@ public class InterviewSession {
     @Column(name = "preview")
     private Boolean preview = Boolean.FALSE;
 
+    /**
+     * 在场角色（对齐 {@code game_status.present_role_ids}）：逗号分隔的 NPC role_id
+     * （本项目 = {@code interviewer.id}）。
+     *
+     * <p>容器里<b>只装 NPC，不装玩家 0</b>：原版 {@code onstage_role} 的调用点全部传 NPC id，
+     * 而 {@code should_activate} 的判据是 {@code len() > 1}——若把玩家也算进去，
+     * 单人面试会变成「一个面试官连说三轮」，与「单人行为不变」的验收直接冲突。
+     */
+    @Column(name = "present_role_ids", length = 256)
+    private String presentRoleIds;
+
     public Long getId() {
         return id;
     }
@@ -194,5 +205,13 @@ public class InterviewSession {
 
     public void setPreview(Boolean preview) {
         this.preview = preview;
+    }
+
+    public String getPresentRoleIds() {
+        return presentRoleIds;
+    }
+
+    public void setPresentRoleIds(String presentRoleIds) {
+        this.presentRoleIds = presentRoleIds;
     }
 }
