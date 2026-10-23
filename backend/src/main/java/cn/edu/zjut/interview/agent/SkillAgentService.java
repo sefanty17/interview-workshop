@@ -137,6 +137,8 @@ public class SkillAgentService {
     private final ScriptValidator validator;
     private final SkillAgentLlmClient llmClient;
     private final SkillAgentRouter router;
+    /** 落盘桥接：章节 YAML → {@code interview_chapter} 并回自检。 */
+    private final ChapterLander lander;
 
     /** 项目数据根目录（原版 {@code data_dir::get_data_dir()}，本项目即 {@code game_data/} 的上一级）。 */
     private final Path dataDir;
@@ -174,6 +176,7 @@ public class SkillAgentService {
                               ObjectMapper objectMapper,
                               ScriptValidator validator,
                               SkillAgentLlmClient llmClient,
+                              ChapterLander lander,
                               @Value("${app.characters-dir}") String charactersDir) {
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
@@ -184,6 +187,7 @@ public class SkillAgentService {
         this.objectMapper = objectMapper;
         this.validator = validator;
         this.llmClient = llmClient;
+        this.lander = lander;
         this.router = new SkillAgentRouter(llmClient, configs, objectMapper);
         // app.characters-dir 指向 game_data/characters，往上两级即项目根（原版 data_dir）；
         // 与 CharacterCardService 同样处理「jar 在 backend/ 下、资产在项目根」的相对路径问题。
@@ -543,7 +547,7 @@ public class SkillAgentService {
                 .toList();
         SkillAgentFileTools fileTools = new SkillAgentFileTools(sandboxDir, config.isAllowAnyPath());
         SkillAgentTools tools = new SkillAgentTools(fileTools, skillsDir, scriptRepository,
-                chapterRepository, validator);
+                chapterRepository, validator, lander);
         SkillAgentTools.RunContext runContext =
                 new SkillAgentTools.RunContext(conversation.getScriptKey(), existingScriptKeys);
 
@@ -572,9 +576,8 @@ public class SkillAgentService {
                     ? SkillAgentLlmClient.Msg.assistant(row.getContent())
                     : SkillAgentLlmClient.Msg.user(row.getContent()));
         }
-        messages.add(SkillAgentLlmClient.Msg.user("""
-                【本轮任务】（第 1/1 项 · %s）
-                用户这一句：%s""".formatted(kind.label(), userMsg)));
+        messages.add(SkillAgentLlmClient.Msg.user(buildTaskBlock(
+                kind, plan.items().get(0).target(), userMsg, runContext, sandboxDir, conversationId)));
 
         int maxRounds = config.getMaxToolRounds() < 0
                 ? Integer.MAX_VALUE
@@ -716,6 +719,93 @@ public class SkillAgentService {
                 .append("，相对路径都相对它解析；不要访问沙箱之外的路径。\n");
         sb.append("技能库存放在 ").append(skillsDir).append("。\n");
         return sb.toString();
+    }
+
+    /**
+     * 本轮任务书：任务类型 + 用户原话 + 磁盘事实 + 交接单。
+     *
+     * <p>对应 {@code role.rs::render_handoff} 的注入位置。交接单决定"这一轮能不能直接做"：
+     * 需要前置就先做前置（同一轮），做不了就只解释不动文件 —— 这些判据全由代码算，
+     * 不交给模型自己猜（模型看到"设计稿不存在"会硬写，看到"断链"会提前补后续章节）。
+     */
+    private String buildTaskBlock(SkillAgentRouter.TaskKind kind, String target, String userMsg,
+                                  SkillAgentTools.RunContext run, Path sandboxDir, Long conversationId) {
+        ScriptFacts facts = collectFacts(run.scriptKey(), target, sandboxDir);
+        ScriptFacts.Handoff handoff = ScriptFacts.reconcile(kind, facts);
+        List<AgentMessage> history = messageRepository.findByConversationIdOrderByIdAsc(conversationId);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("【本轮任务】（第 1/1 项 · ").append(kind.label()).append("）\n");
+        sb.append("用户这一句：").append(userMsg).append('\n');
+        if (target != null && !target.isBlank()) {
+            sb.append("涉及章节：").append(target).append('\n');
+        }
+        sb.append("\n【剧本现状】\n").append(renderFacts(facts));
+        String handoffText = ScriptFacts.renderHandoff(handoff);
+        if (!handoffText.isBlank()) {
+            sb.append("\n【承接判断】\n").append(handoffText).append('\n');
+        }
+        String receiptNote = renderReceiptNote(history);
+        if (receiptNote != null) {
+            sb.append(receiptNote);
+        }
+        return sb.toString();
+    }
+
+    /** 从库（已落盘章节）与沙箱（设计稿 / 细节稿）联合取事实。 */
+    private ScriptFacts collectFacts(String scriptKey, String target, Path sandboxDir) {
+        Path scriptDir = null;
+        if (scriptKey != null && !scriptKey.isBlank()) {
+            scriptDir = sandboxDir.resolve("scripts").resolve(scriptKey).normalize();
+        }
+        return ScriptFacts.collect(scriptDir, target, lander.writtenChapterIds(scriptKey));
+    }
+
+    /** 事实的给模型看的说法（只陈述现状，不给建议 —— 建议在交接单里）。 */
+    private static String renderFacts(ScriptFacts facts) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("- 设计稿（.agent/design.md）：").append(facts.hasDesign() ? "有" : "没有");
+        if (facts.hasDesign()) {
+            sb.append(facts.hasPlan() ? "，读出了章节列表" : "，但读不出章节列表");
+        }
+        sb.append('\n');
+        sb.append("- 已落盘的章节：").append(facts.hasWritten() ? "有" : "一章都还没有");
+        if (facts.hasWritten()) {
+            sb.append(facts.hasNext() ? "，设计稿里还有没落盘的" : "，设计稿里列的都已落盘");
+        }
+        sb.append('\n');
+        if (facts.targetExists() != null) {
+            sb.append("- 用户点名的章：")
+                    .append(facts.targetExists() ? "在" : "还不在")
+                    .append(facts.targetPartial() ? "（部分在、部分不在）" : "");
+            if (facts.targetIsNext()) {
+                sb.append("，正好是下一个待写的");
+            }
+            sb.append('\n');
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 上一轮留下的、还没进归档的回执要点（对齐 {@code core.rs::build_receipt_note} 的语义：
+     * 只说"上一轮还欠着什么"，不把上一轮的全文搬进来）。
+     *
+     * <p>本项目的队列不落库，所以这里只取最后一条 assistant 正文里出现的「还欠 / 没做完」提示。
+     */
+    private static String renderReceiptNote(List<AgentMessage> history) {
+        for (int i = history.size() - 1; i >= 0; i--) {
+            AgentMessage row = history.get(i);
+            if (!"assistant".equals(row.getRole()) || row.getContent() == null || row.getContent().isBlank()) {
+                continue;
+            }
+            String content = row.getContent();
+            // 只看最后一条 assistant 正文：它要是没提"还欠什么"，就没有回执要带
+            if (content.contains("还没") || content.contains("没做完") || content.contains("欠着")) {
+                return "\n【上一轮的回执】\n" + abbreviate(content.replace('\n', ' '), 160) + '\n';
+            }
+            return null;
+        }
+        return null;
     }
 
     /** 读某个角色手册的正文；文件不存在返回 null（不抛，缺手册不该让整轮崩掉）。 */

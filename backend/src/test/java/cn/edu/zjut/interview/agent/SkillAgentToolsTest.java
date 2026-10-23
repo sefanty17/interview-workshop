@@ -43,6 +43,9 @@ class SkillAgentToolsTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private ChapterLander lander;
+
     @TempDir
     Path sandbox;
 
@@ -64,14 +67,14 @@ class SkillAgentToolsTest {
     private SkillAgentTools tools() {
         SkillAgentFileTools fileTools = new SkillAgentFileTools(sandbox, false);
         return new SkillAgentTools(fileTools, sandbox.resolve("skills"),
-                scriptRepository, chapterRepository, null);
+                scriptRepository, chapterRepository, null, lander);
     }
 
     /** validator 注入版（validate_script 用）。 */
     private SkillAgentTools toolsWithValidator(cn.edu.zjut.interview.editor.ScriptValidator validator) {
         SkillAgentFileTools fileTools = new SkillAgentFileTools(sandbox, false);
         return new SkillAgentTools(fileTools, sandbox.resolve("skills"),
-                scriptRepository, chapterRepository, validator);
+                scriptRepository, chapterRepository, validator, lander);
     }
 
     private static SkillAgentTools.RunContext runCtx(String boundKey) {
@@ -83,7 +86,15 @@ class SkillAgentToolsTest {
     private static final SkillAgentTools.ItemScope CHAT_SCOPE =
             new SkillAgentTools.ItemScope(false, SkillAgentRouter.TaskKind.CHAT);
 
-    private static final List<String> ALL = SkillAgentRouter.ALL_TOOLS;
+    /**
+     * 测试里放行全部工具的白名单。
+     *
+     * <p>原先取 {@code SkillAgentRouter.ALL_TOOLS}，那个常量已经删了（它含 {@code read_skill}，
+     * 而四角色一律不给这个口子）。测试要的是"不受白名单限制"，所以这里显式列全。
+     */
+    private static final List<String> ALL = List.of(
+            "list_skills", "read_skill", "validate_script",
+            "list_files", "read_file", "write_file", "edit_file", "delete_file");
 
     private SkillAgentTools.ToolResult call(SkillAgentTools tools, String name, String argsJson) {
         return tools.execute(runCtx(null), WRITE_SCOPE, ALL, name, readTree(argsJson));

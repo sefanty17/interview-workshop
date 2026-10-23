@@ -54,17 +54,21 @@ public class SkillAgentTools {
     private final InterviewScriptRepository scriptRepository;
     private final InterviewChapterRepository chapterRepository;
     private final ScriptValidator validator;
+    /** 落盘桥接：章节 YAML 写完顺手落进 {@code interview_chapter} 并回一段自检。 */
+    private final ChapterLander lander;
 
     public SkillAgentTools(SkillAgentFileTools fileTools,
                            Path skillsDir,
                            InterviewScriptRepository scriptRepository,
                            InterviewChapterRepository chapterRepository,
-                           ScriptValidator validator) {
+                           ScriptValidator validator,
+                           ChapterLander lander) {
         this.fileTools = fileTools;
         this.skillsDir = skillsDir;
         this.scriptRepository = scriptRepository;
         this.chapterRepository = chapterRepository;
         this.validator = validator;
+        this.lander = lander;
     }
 
     // ───────────────────────── 类型 ─────────────────────────
@@ -418,7 +422,26 @@ public class SkillAgentTools {
         if (refusal != null) {
             return ToolResult.failure(refusal);
         }
-        return ToolResult.success(fileTools.writeFile(path, content, append));
+        String written = fileTools.writeFile(path, content, append);
+
+        // 章节文件写完 → 同步落进剧本库，并回一段自检。
+        // 原版这份文件既是编辑器产物、又被引擎直接读，不存在这一步；本项目章节在库里，
+        // 少了这一步 AI 落盘的章节引擎根本跑不到。
+        // append 时文件还没写完，跳过（对齐 tools.rs::with_chapter_check）。
+        if (append) {
+            return ToolResult.success(written);
+        }
+        ChapterLander.Landing landing = lander.land(scriptKeyOf(run), path, content);
+        if (!landing.ok()) {
+            return ToolResult.failure(written + "\n\n" + landing.message());
+        }
+        String receipt = landing.checkReceipt() == null ? "" : landing.checkReceipt();
+        return ToolResult.success(written + "\n" + landing.message() + receipt);
+    }
+
+    /** 取本轮会话绑定的剧本 code（{@code null} 表示还没绑定）。 */
+    private static String scriptKeyOf(RunContext run) {
+        return run == null ? null : run.scriptKey();
     }
 
     private ToolResult editFile(RunContext run, ItemScope item, JsonNode args) {
@@ -448,7 +471,22 @@ public class SkillAgentTools {
         if (refusal != null) {
             return ToolResult.failure(refusal);
         }
-        return ToolResult.success(fileTools.editFile(path, old, next, replaceAll));
+        String edited = fileTools.editFile(path, old, next, replaceAll);
+
+        // 改章节文件同样要落库（同 write_file 的理由）。改完的文要整份重新读出来落，
+        // 因为 edit_file 只换一段，库里那份得是全文。
+        if (next.isBlank()) {
+            // 整段抹掉 = 章节被清空，等价于删这一章（原版也是文件没了就没这章）
+            return landDeletion(run, path, edited);
+        }
+        String whole = fileTools.readFile(path);
+        ChapterLander.Landing landing = lander.land(scriptKeyOf(run), path, whole);
+        if (!landing.ok()) {
+            return ToolResult.failure(edited + "\n\n" + landing.message());
+        }
+        String receipt = landing.checkReceipt() == null ? "" : landing.checkReceipt();
+        String landed = landing.message() == null ? "" : "\n" + landing.message();
+        return ToolResult.success(edited + landed + receipt);
     }
 
     private ToolResult deleteFile(RunContext run, ItemScope item, JsonNode args) {
@@ -465,7 +503,27 @@ public class SkillAgentTools {
             return ToolResult.failure("这一轮用户没有要求产出能跑的章节，所以 `" + path + "` 不能删。"
                     + "要删 `Chapters/` 里的东西，得用户明说「改 YAML」（或旧说法「落盘」）那一轮才做。");
         }
-        return ToolResult.success(fileTools.deleteFile(path));
+        return landDeletion(run, path, fileTools.deleteFile(path));
+    }
+
+    /**
+     * 章节文件没了 → 库里那一章也删掉。
+     *
+     * <p>原版章节就是文件，文件没了自然就没这一章；本项目章节在库里，得显式跟着删。
+     * 引用检查留给校验器报 {@code graph.missing_target}（与原版删除行为一致）。
+     */
+    private ToolResult landDeletion(RunContext run, String path, String fileMessage) {
+        String chapterId = ChapterLander.chapterIdOfPath(path);
+        if (chapterId == null) {
+            return ToolResult.success(fileMessage);
+        }
+        String scriptKey = scriptKeyOf(run);
+        if (scriptKey == null || scriptKey.isBlank()) {
+            return ToolResult.success(fileMessage);
+        }
+        return lander.deleteChapter(scriptKey, chapterId)
+                .<ToolResult>map(msg -> ToolResult.success(fileMessage + "\n" + msg))
+                .orElseGet(() -> ToolResult.success(fileMessage));
     }
 
     // ───────────────────────── 技能库扫描（对齐 skills.rs） ─────────────────────────
