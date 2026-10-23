@@ -7,6 +7,7 @@ import cn.edu.zjut.interview.domain.InterviewMessage;
 import cn.edu.zjut.interview.domain.InterviewScript;
 import cn.edu.zjut.interview.domain.InterviewSession;
 import cn.edu.zjut.interview.domain.Interviewer;
+import cn.edu.zjut.interview.domain.PlayerIdentity;
 import cn.edu.zjut.interview.domain.UserProfile;
 import cn.edu.zjut.interview.dto.CreateSessionRequest;
 import cn.edu.zjut.interview.dto.CreateSessionResponse;
@@ -17,6 +18,7 @@ import cn.edu.zjut.interview.llm.LlmMessage;
 import cn.edu.zjut.interview.llm.LlmOptions;
 import cn.edu.zjut.interview.prompt.InterviewPlan;
 import cn.edu.zjut.interview.prompt.MemoryBuilder;
+import cn.edu.zjut.interview.prompt.PlayerIdentityPrompt;
 import cn.edu.zjut.interview.prompt.PromptAssembler;
 import cn.edu.zjut.interview.repository.InterviewChapterRepository;
 import cn.edu.zjut.interview.repository.InterviewMessageRepository;
@@ -45,6 +47,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -77,6 +80,12 @@ public class ChatService {
     private final ConfigService configService;
     private final ObjectMapper objectMapper;
 
+    /** 「我的身份」：玩家台词落库要写下是哪个身份说的、叫什么名字。 */
+    private final PlayerIdentityService playerIdentities;
+
+    /** 身份/关系块渲染（玩家块 + 其他角色块）。 */
+    private final PlayerIdentityPrompt identityPrompt;
+
     /** 已验收的拼装/分句组件，直接复用，不复制逻辑。 */
     private final MemoryBuilder memoryBuilder = new MemoryBuilder();
     private final SymbolParser symbolParser = new SymbolParser();
@@ -101,7 +110,8 @@ public class ChatService {
                        InterviewChapterRepository chapterRepository,
                        LlmClient llmClient,
                        ConfigService configService,
-                       ObjectMapper objectMapper) {
+                       ObjectMapper objectMapper,
+                       PlayerIdentityService playerIdentities) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.interviewerRepository = interviewerRepository;
@@ -111,6 +121,8 @@ public class ChatService {
         this.llmClient = llmClient;
         this.configService = configService;
         this.objectMapper = objectMapper;
+        this.playerIdentities = playerIdentities;
+        this.identityPrompt = new PlayerIdentityPrompt(objectMapper);
     }
 
     @PreDestroy
@@ -397,6 +409,12 @@ public class ChatService {
         message.setAction(action);
         message.setMsgType("text");
         message.setSenderRoleId(senderRoleId);
+        // 玩家行一律带名字（对齐 memory_builder.rs「永远带名」）：
+        // 换身份后历史里会并存多个身份的台词，只靠 role=user 分不清谁说的。
+        if (senderRoleId != null && senderRoleId == InterviewMessage.PLAYER_ROLE_ID) {
+            message.setIdentityId(playerIdentities.currentIdentityId());
+            message.setDisplayName(playerIdentities.currentDisplayName());
+        }
         message.setCreatedAt(LocalDateTime.now());
         messageRepository.save(message);
     }
@@ -414,7 +432,7 @@ public class ChatService {
         return Math.round(raw * 10) / 10.0;
     }
 
-    /** 拼 system 串：人设 + 面试编排 + 框架句 + 格式 + 示例 + 情绪限制 + 正文要求。 */
+    /** 拼 system 串：人设 + 面试编排 + 框架句 + 格式 + 示例 + 情绪限制 + 正文要求 + 身份/关系块。 */
     private String buildSystemPrompt(Interviewer interviewer, UserProfile profile, InterviewScript script) {
         String userName = profile == null || profile.getNickname() == null ? "候选人" : profile.getNickname();
         return PromptAssembler.build(
@@ -424,7 +442,32 @@ public class ChatService {
                 interviewer.getExampleDialogue(),
                 buildPlan(interviewer, script),
                 // chat.reply_count：默认 3 时不追加任何提示（规格 B4-BE §三）
-                configService.getInt(ConfigKey.CHAT_REPLY_COUNT));
+                configService.getInt(ConfigKey.CHAT_REPLY_COUNT),
+                buildIdentityBlock(interviewer, userName));
+    }
+
+    /**
+     * 身份/关系块（{@code player_block + peers_block}），压在整个 system prompt 末尾。
+     *
+     * <p>作用是把「正在与你对话的那个『我』是谁」钉死，声明优先于人设与历史里关于这个人的写法。
+     * 没有身份卡时只输出名字那一段，仍然比什么都没有强 ——
+     * 多人场景下这是唯一能让模型分清"玩家"和"邻座面试官"的东西。
+     */
+    private String buildIdentityBlock(Interviewer interviewer, String userName) {
+        Optional<PlayerIdentity> identity = playerIdentities.current();
+        String name = identity.map(PlayerIdentity::displayName).orElse(userName);
+        String prompt = identity.map(PlayerIdentity::getPrompt).orElse(null);
+
+        // 说话者（当前面试官）卡上写的关系：从 interviewer 侧取，键是 me:<身份id>
+        PlayerIdentityPrompt.RelationView relation = null;
+        if (identity.isPresent()) {
+            var speaker = new PlayerIdentityPrompt.AiEndpoint(interviewer.getCode());
+            var target = new PlayerIdentityPrompt.MeEndpoint(identity.get().getIdentityId());
+            relation = identityPrompt.resolveRelation(speaker, target, Map.of(),
+                    identityPrompt.parseRelations(identity.get().getRelations()), null)
+                    .orElse(null);
+        }
+        return identityPrompt.buildPlayerBlock(name, prompt, relation);
     }
 
     /** 把 {@code interview_script} + {@code interview_chapter} 渲染成编排段（规格 B0-BE §3.3）。 */

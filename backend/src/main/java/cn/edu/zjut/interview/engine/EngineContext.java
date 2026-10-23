@@ -42,6 +42,8 @@ public class EngineContext {
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper;
     private final String playerName;
+    /** 玩家台词属于哪个身份（对齐 {@code line.identity_id}）；不知道就留 {@code null}。 */
+    private final String identityId;
     private final ObjectNode vars;
     private final String chapterCode;
     private final Set<String> presentRoles;
@@ -61,7 +63,7 @@ public class EngineContext {
                          ObjectNode vars,
                          String chapterCode) {
         this(session, event, sink, messageRepository, chapterRepository, interviewerRepository,
-                llmClient, objectMapper, playerName, vars, chapterCode, defaultPresentRoles());
+                llmClient, objectMapper, playerName, vars, chapterCode, defaultPresentRoles(), null);
     }
 
     public EngineContext(InterviewSession session,
@@ -76,6 +78,23 @@ public class EngineContext {
                          ObjectNode vars,
                          String chapterCode,
                          Set<String> presentRoles) {
+        this(session, event, sink, messageRepository, chapterRepository, interviewerRepository,
+                llmClient, objectMapper, playerName, vars, chapterCode, presentRoles, null);
+    }
+
+    public EngineContext(InterviewSession session,
+                         JsonNode event,
+                         EventSink sink,
+                         InterviewMessageRepository messageRepository,
+                         InterviewChapterRepository chapterRepository,
+                         InterviewerRepository interviewerRepository,
+                         LlmClient llmClient,
+                         ObjectMapper objectMapper,
+                         String playerName,
+                         ObjectNode vars,
+                         String chapterCode,
+                         Set<String> presentRoles,
+                         String identityId) {
         this.session = session;
         this.event = event;
         this.sink = sink;
@@ -88,6 +107,7 @@ public class EngineContext {
         this.vars = vars;
         this.chapterCode = chapterCode;
         this.presentRoles = presentRoles == null ? defaultPresentRoles() : presentRoles;
+        this.identityId = identityId;
     }
 
     /** 舞台初始状态：只有主角在场。 */
@@ -250,7 +270,14 @@ public class EngineContext {
         message.setAction(action);
         message.setMsgType(msgType == null ? "text" : msgType);
         message.setStageCode(chapterCode);
-        message.setSenderRoleId(senderRoleId(role, msgType));
+        Integer roleId = senderRoleId(role, msgType);
+        message.setSenderRoleId(roleId);
+        // 玩家行一律带名字（对齐 memory_builder.rs「永远带名」）；旁白/剧情借 user 落库，不带
+        if (roleId != null && roleId == InterviewMessage.PLAYER_ROLE_ID) {
+            message.setIdentityId(identityId);
+            message.setDisplayName(playerName == null || playerName.isBlank()
+                    ? "用户" : playerName.trim());
+        }
         message.setCreatedAt(LocalDateTime.now());
         messageRepository.save(message);
         return seq;

@@ -85,16 +85,37 @@ public final class PromptAssembler {
                                String exampleDialogue,
                                String interviewPlan,
                                int replyCount) {
+        return build(aiPrompt, userName, characterName, exampleDialogue, interviewPlan, replyCount, "");
+    }
+
+    /**
+     * 同上，额外接受「身份/关系块」（{@code player_block + peers_block}）。
+     *
+     * <p>位置是硬约束，对齐 {@code prompt.rs:285-286}：<b>压在全篇最末尾</b>，
+     * 紧邻对话历史 —— 近因权重最高，身份与关系才压得住前面的人设。
+     * 两个早返回分支（旧版卡）里它并入人设正文，同样不丢。
+     *
+     * @param identityBlock 已渲染好的身份/关系块（{@code buildPlayerBlock + buildPeersBlock}），可空
+     */
+    public static String build(String aiPrompt,
+                               String userName,
+                               String characterName,
+                               String exampleDialogue,
+                               String interviewPlan,
+                               int replyCount,
+                               String identityBlock) {
         String prompt = aiPrompt == null ? "" : aiPrompt;
+        String identity = identityBlock == null ? "" : identityBlock;
 
         // ---- 两个硬性短路（顺序与 Rust 一致：先日语翻译，再对话格式提示）----
+        // 原版这两个分支返回的是 ai_prompt_with_player（身份块并入人设），不是裸人设
         if (prompt.contains("日语翻译")) {
             log.warn("你使用的人物为旧版，不能使用实时翻译功能");
-            return prompt;
+            return prompt + identity;
         }
         if (prompt.contains("以下是我的对话格式提示")) {
             log.warn("你使用的人物为旧版，不进行拼接prompt");
-            return prompt;
+            return prompt + identity;
         }
 
         String framing = buildFramingPrefixCn(userName, characterName);
@@ -121,6 +142,8 @@ public final class PromptAssembler {
         if (replyCount > 0 && replyCount != DEFAULT_REPLY_COUNT) {
             out.append("\n本次回复请输出 ").append(replyCount).append(" 段台词。\n");
         }
+        // 身份/关系块压尾：紧邻对话历史，近因权重最高（prompt.rs:285-286）
+        out.append(identity);
         return out.toString();
     }
 

@@ -30,6 +30,11 @@ public class MemoryBuilder {
 
     private static final Logger log = LoggerFactory.getLogger(MemoryBuilder.class);
 
+    /** 带名渲染时要排掉的两个称呼（对齐 {@code memory_builder.rs:175} 的 {@code "旁白" | "系统"}）。 */
+    private static final String NARRATOR_NAME = "旁白";
+
+    private static final String SYSTEM_NAME = "系统";
+
     /** 缓冲段的类型，对应 Rust 的 {@code BufferKind}。 */
     private enum BufferKind {
         /** 面试官（assistant）连续发言。 */
@@ -118,7 +123,7 @@ public class MemoryBuilder {
                 // Rust: parts.push(user_text.join("\n"))，多条台词用换行连接，段末不再补换行
                 List<String> userTexts = new ArrayList<>(buffer.size());
                 for (InterviewMessage message : buffer) {
-                    userTexts.add(nullToEmpty(message.getContent()));
+                    userTexts.add(formatUserLine(message));
                 }
                 memory.add(LlmMessage.user(String.join("\n", userTexts)));
             }
@@ -150,6 +155,36 @@ public class MemoryBuilder {
         }
         s.append('\n');
         return s.toString();
+    }
+
+    /**
+     * 单条玩家台词，对应 {@code memory_builder.rs:155-181} 的「玩家行一律带名」。
+     *
+     * <p>为什么必须带名：换身份后历史里会并存多个身份说的台词，只靠 {@code role=user}
+     * 分不清谁说的；多人对话里更严重 —— 邻座面试官的话和玩家的话都会进这一块。
+     *
+     * <p>两种情况保持裸内容（与原版一致，也和本批之前的行为逐字节相同）：
+     * <ul>
+     *   <li>{@code sender_role_id} 不是玩家 —— 引擎借 {@code role=user} 落旁白与剧情提示；</li>
+     *   <li>玩家行没填 {@code display_name} —— 老数据（本批之前的库里没有这一列）。</li>
+     * </ul>
+     */
+    private static String formatUserLine(InterviewMessage message) {
+        String content = nullToEmpty(message.getContent());
+        Integer senderRoleId = message.getSenderRoleId();
+        if (senderRoleId == null || senderRoleId != InterviewMessage.PLAYER_ROLE_ID) {
+            return content;
+        }
+        String name = message.getDisplayName();
+        if (name == null || name.isBlank()) {
+            return content;
+        }
+        name = name.trim();
+        // 旁白 / 系统不该被冠名（原版同样按这两个名字特别处理）
+        if (NARRATOR_NAME.equals(name) || SYSTEM_NAME.equals(name)) {
+            return content;
+        }
+        return name + ": " + content;
     }
 
     private static String nullToEmpty(String value) {

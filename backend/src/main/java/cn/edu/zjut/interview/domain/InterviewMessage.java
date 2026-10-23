@@ -66,6 +66,23 @@ public class InterviewMessage {
     @Column(name = "sender_role_id")
     private Integer senderRoleId;
 
+    /**
+     * 玩家说的是哪个身份，对齐 LingChat {@code line.identity_id}；非玩家行留 {@code null}。
+     *
+     * <p>换身份后历史里会并存多个身份说的台词，只靠 {@code role=user} 分不清谁说的，
+     * 所以玩家行必须同时带这个 id 与 {@link #displayName}。
+     */
+    @Column(name = "identity_id", length = 64)
+    private String identityId;
+
+    /**
+     * 这一句在历史里显示成谁说的，对齐 LingChat {@code line.display_name}。
+     *
+     * <p>玩家行必填（渲染成 {@code 名字: 内容}）；旁白 / 系统行留 {@code null}（保持裸内容）。
+     */
+    @Column(name = "display_name", length = 64)
+    private String displayName;
+
     @Column(name = "tokens")
     private Integer tokens;
 
@@ -158,6 +175,22 @@ public class InterviewMessage {
 
     public void setSenderRoleId(Integer senderRoleId) {
         this.senderRoleId = senderRoleId;
+    }
+
+    public String getIdentityId() {
+        return identityId;
+    }
+
+    public void setIdentityId(String identityId) {
+        this.identityId = identityId;
+    }
+
+    public String getDisplayName() {
+        return displayName;
+    }
+
+    public void setDisplayName(String displayName) {
+        this.displayName = displayName;
     }
 
     public Integer getTokens() {
