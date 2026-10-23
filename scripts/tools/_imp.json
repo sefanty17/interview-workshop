@@ -1,0 +1,1 @@
+{"script_name":"导入测试剧本","intro_chapter":"intro","chapters":[{"code":"intro","name":"开场","order_num":1,"events":[{"type":"narration","text":"x"},{"type":"chapter_end","end_type":"linear"}]}]}

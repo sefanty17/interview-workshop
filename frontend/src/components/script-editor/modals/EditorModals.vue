@@ -1,0 +1,194 @@
+<script setup lang="ts">
+/**
+ * 新建弹窗（对照原版 `modals/EditorModals.vue`，322 行）。
+ *
+ * 本批只保留 script / chapter 两个分支：角色、导入角色、试玩预览等分支属于 E6 之后，
+ * 原版依赖的 `Toggle` / `store.globalCharacters` 在本项目都还没有对应实现。
+ */
+import { reactive, computed } from "vue";
+import { createChapter, createScript } from "../../../store/scriptEditor";
+import { jobs } from "../../../data/mock";
+import { interviewers } from "../../../data/interviewers";
+
+const props = defineProps<{
+  modal: "script" | "chapter" | null;
+}>();
+const emit = defineEmits<{
+  "update:modal": [value: "script" | "chapter" | null];
+}>();
+
+const close = () => emit("update:modal", null);
+
+const MODAL_TITLES: Record<string, string> = {
+  script: "新建剧本",
+  chapter: "新建章节",
+};
+const modalTitle = computed(() => MODAL_TITLES[props.modal ?? ""] ?? "");
+
+const scriptForm = reactive({
+  code: "",
+  scriptName: "",
+  description: "",
+  jobCode: "java",
+  interviewerCode: "strict",
+  level: "校招",
+  companyStyle: "",
+});
+const chapterForm = reactive({ id: "", name: "" });
+
+const confirmModal = async () => {
+  const which = props.modal;
+  emit("update:modal", null);
+  if (which === "script") {
+    // store 的 action 自己会刷新列表并打开新剧本（作者点「新建」就是想马上写）
+    await createScript({ ...scriptForm });
+    Object.assign(scriptForm, {
+      code: "",
+      scriptName: "",
+      description: "",
+      jobCode: "java",
+      interviewerCode: "strict",
+      level: "校招",
+      companyStyle: "",
+    });
+  } else if (which === "chapter") {
+    await createChapter(chapterForm.id, chapterForm.name);
+    chapterForm.id = "";
+    chapterForm.name = "";
+  }
+};
+</script>
+
+<template>
+  <!-- Teleport 到 #app 而非 body：body 下浮层脱离 #app 的整体缩放作用域，
+       缩放后与编辑器主体比例失调 -->
+  <Teleport to="#app">
+    <Transition
+      enter-active-class="transition-opacity duration-200 ease"
+      leave-active-class="transition-opacity duration-200 ease"
+      enter-from-class="opacity-0"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="modal"
+        class="modal-mask fixed inset-0 z-[9999] flex items-center justify-center bg-black/55 p-4 backdrop-blur-md"
+        @click.self="close"
+      >
+        <!-- 主弹窗 -->
+        <div
+          class="max-h-[86dvh] w-[min(440px,92vw)] overflow-y-auto rounded-xl border border-white/12.5 bg-[rgba(12,20,30,0.86)] px-[18px] py-4 pb-[18px] shadow-[0_8px_32px_rgba(0,0,0,0.45),inset_0_1px_1px_rgba(255,255,255,0.06)] backdrop-blur-lg backdrop-saturate-[1.4]"
+        >
+          <div
+            class="mb-4 flex items-center gap-2 border-b-2 border-brand pb-2"
+          >
+            <h4 class="font-semibold text-white">{{ modalTitle }}</h4>
+            <button
+              class="ml-auto text-white/50 transition-all duration-300 hover:rotate-90 hover:text-brand"
+              @click="close"
+            >
+              ✕
+            </button>
+          </div>
+
+          <template v-if="modal === 'script'">
+            <div class="mb-4">
+              <label class="inline-flex items-center text-[0.9rem] font-medium text-brand"
+                >剧本编码</label
+              >
+              <input v-model="scriptForm.code" class="glass-input" placeholder="java-friendly" />
+              <p class="mt-[0.3rem] text-[0.72rem] leading-[1.7] text-white/40">
+                小写字母开头，可含数字、_ 与 -；作为剧本唯一标识，创建后不改
+              </p>
+            </div>
+            <div class="mb-4">
+              <label class="inline-flex items-center text-[0.9rem] font-medium text-brand"
+                >剧本名</label
+              >
+              <input
+                v-model="scriptForm.scriptName"
+                class="glass-input"
+                placeholder="Java 后端 · 友好一轮"
+              />
+              <p class="mt-[0.3rem] text-[0.72rem] leading-[1.7] text-white/40">
+                显示在剧本列表与面包屑上
+              </p>
+            </div>
+            <div class="mb-4">
+              <label class="inline-flex items-center text-[0.9rem] font-medium text-brand"
+                >简介</label
+              >
+              <textarea v-model="scriptForm.description" class="glass-input min-h-16"></textarea>
+            </div>
+            <div class="mb-4">
+              <label class="inline-flex items-center text-[0.9rem] font-medium text-brand"
+                >岗位</label
+              >
+              <select v-model="scriptForm.jobCode" class="glass-input">
+                <option v-for="j in jobs" :key="j.id" :value="j.id">{{ j.name }}</option>
+              </select>
+            </div>
+            <div class="mb-4">
+              <label class="inline-flex items-center text-[0.9rem] font-medium text-brand"
+                >面试官</label
+              >
+              <select v-model="scriptForm.interviewerCode" class="glass-input">
+                <option v-for="p in interviewers" :key="p.code" :value="p.code">
+                  {{ p.name }}
+                </option>
+              </select>
+            </div>
+            <div class="mb-4">
+              <label class="inline-flex items-center text-[0.9rem] font-medium text-brand"
+                >难度</label
+              >
+              <input v-model="scriptForm.level" class="glass-input" placeholder="校招 / 社招 / 实习" />
+            </div>
+            <div class="mb-4">
+              <label class="inline-flex items-center text-[0.9rem] font-medium text-brand"
+                >公司风格</label
+              >
+              <input
+                v-model="scriptForm.companyStyle"
+                class="glass-input"
+                placeholder="一线互联网大厂"
+              />
+            </div>
+          </template>
+
+          <template v-else-if="modal === 'chapter'">
+            <div class="mb-4">
+              <label class="inline-flex items-center text-[0.9rem] font-medium text-brand"
+                >章节文件名</label
+              >
+              <input v-model="chapterForm.id" class="glass-input" placeholder="main2，或 Intro/intro2 放进子目录" />
+            </div>
+            <div class="mb-4">
+              <label class="inline-flex items-center text-[0.9rem] font-medium text-brand"
+                >显示名</label
+              >
+              <input v-model="chapterForm.name" class="glass-input" placeholder="例如：2 樱花的公园" />
+              <p class="mt-[0.3rem] text-[0.72rem] leading-[1.7] text-white/40">
+                新章节自带一条「章节结束」，免得一保存就报缺少结束事件。
+              </p>
+            </div>
+          </template>
+
+          <div class="mt-5 flex justify-end gap-2">
+            <button
+              class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/6 px-3 py-[0.3rem] text-[0.8rem] whitespace-nowrap text-white/70 transition-all duration-200 hover:enabled:bg-white/[0.12] hover:enabled:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              @click="close"
+            >
+              取消
+            </button>
+            <button
+              class="inline-flex items-center gap-1 rounded-lg border border-[rgba(121,217,255,0.45)] bg-[rgba(121,217,255,0.14)] px-3 py-[0.3rem] text-[0.8rem] whitespace-nowrap text-brand transition-all duration-200 hover:bg-[rgba(121,217,255,0.24)] disabled:cursor-not-allowed disabled:opacity-40"
+              @click="confirmModal"
+            >
+              确定
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+</template>

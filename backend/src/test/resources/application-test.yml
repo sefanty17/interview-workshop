@@ -1,0 +1,6 @@
+# 测试 profile：走内存库，不碰开发库 backend/data/interview.mv.db。
+# 自 B12 起 seed 脚本改为幂等（CREATE TABLE IF NOT EXISTS + MERGE INTO），开发库不再每次
+# 启动重建；测试若继续连 file 库，既会读到真实会话，也会和正在跑的后端抢文件锁。
+spring:
+  datasource:
+    url: jdbc:h2:mem:interview-test;MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1

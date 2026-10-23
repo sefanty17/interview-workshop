@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>角色卡数据基座 · 迁移验收</title>
+<style>
+  :root {
+    --accent: #79d9ff;
+    --panel: rgba(255, 255, 255, 0.055);
+    --line: rgba(255, 255, 255, 0.11);
+    --muted: rgba(255, 255, 255, 0.52);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 28px 56px;
+    background: #0b0d12;
+    color: #fff;
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  header { margin-bottom: 26px; }
+  h1 { margin: 0 0 6px; font-size: 22px; font-weight: 500; letter-spacing: .5px; }
+  .sub { color: var(--muted); font-size: 13px; line-height: 1.7; }
+  .sub b { color: var(--accent); font-weight: 500; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 18px;
+    backdrop-filter: blur(20px);
+  }
+  .card-top { display: flex; gap: 14px; align-items: flex-start; }
+  .stage {
+    width: 108px; height: 150px; flex: 0 0 108px;
+    background: rgba(121, 217, 255, 0.07);
+    border-radius: 12px;
+    display: flex; align-items: flex-end; justify-content: center;
+    overflow: hidden;
+  }
+  .stage img { width: 100%; height: 100%; object-fit: contain; object-position: bottom; }
+  .meta { min-width: 0; flex: 1; }
+  .name { font-size: 17px; font-weight: 500; letter-spacing: .5px; }
+  .role {
+    display: inline-block; margin: 6px 0 8px;
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    color: var(--accent); background: rgba(121, 217, 255, 0.13);
+    border: 1px solid rgba(121, 217, 255, 0.28);
+  }
+  .info { font-size: 12px; color: var(--muted); line-height: 1.65; white-space: pre-line; }
+  .stats {
+    display: flex; gap: 14px; margin-top: 12px; padding-top: 12px;
+    border-top: 1px dashed var(--line);
+    font-size: 11px; color: var(--muted);
+  }
+  .stats b { color: #fff; font-weight: 500; }
+  .emos { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+  .emo { width: 46px; text-align: center; }
+  .emo img {
+    width: 46px; height: 58px; object-fit: contain; object-position: bottom;
+    background: rgba(255, 255, 255, 0.04); border-radius: 6px;
+    transition: transform .18s ease, background .18s ease;
+  }
+  .emo img:hover { transform: translateY(-3px); background: rgba(121, 217, 255, 0.14); }
+  .emo span { display: block; font-size: 10px; color: var(--muted); margin-top: 3px; }
+  .emo.patched img { outline: 1px solid rgba(239, 159, 39, .6); }
+  .emo.patched span { color: #ef9f27; }
+  footer { margin-top: 30px; font-size: 12px; color: var(--muted); line-height: 1.9; }
+  footer code { color: var(--accent); background: rgba(121,217,255,.08); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>角色卡数据基座</h1>
+  <div class="sub">
+    迁自 <b>LingChat</b> 的 4 张角色卡，人设与范例对话 1:1 原样带入；立绘 21 张/角色已落到 <b>/avatars/{code}/</b>。<br />
+    橙色描边 = 源卡缺这张表情，已用「正常」补位。
+  </div>
+</header>
+<div class="grid" id="grid"></div>
+<footer>
+  数据源：<code>data/seed/interviewers.json</code> · <code>data/seed/emotions.json</code> · <code>data/schema/schema-h2.sql</code> · <code>data/seed/data-h2.sql</code>
+</footer>
+
+<script>
+const EMOTIONS = ["正常","平静","高兴","兴奋","害羞","心动","紧张","慌张","担心","害怕",
+                  "惊讶","疑惑","无奈","生气","厌恶","伤心","羞耻","自信","认真","调皮"];
+const PATCHED = { friendly: ["平静"] };
+
+const ROLES = [
+  { code:"strict",   name:"风雪",     role:"严格技术面", chars:5042,
+    info:"这是一只残忍的小猫娘。\n喜欢哈气，但又容易生病的小占卜师。\n刀子嘴豆腐心的小可爱一枚~" },
+  { code:"friendly", name:"钦灵",     role:"温和 HR 面", chars:649,
+    info:"这是一只可爱的小狼娘。\n喜欢粘你，傲娇又可爱的小程序员。\n喜欢变态的玩法，是你的好助手~" },
+  { code:"pressure", name:"松子",     role:"压力面", chars:691,
+    info:"白发红瞳、喜欢收集蝴蝶结的人形小恶魔。\n俏皮、自信、偶尔淘气，认真起来也很可靠。\n「主人，今天的小惊喜已经准备好啦，喵～」" },
+  { code:"expert",   name:"DeepSeek", role:"技术专家面", chars:685,
+    info:"来自深度索求的大肥鱼，本体是蓝鲸\n是超高智能的AI体，拥有超强的干活功能，\n瓷器最强的大模型！" },
+];
+
+const grid = document.getElementById("grid");
+for (const r of ROLES) {
+  const el = document.createElement("section");
+  el.className = "card";
+  const patch = PATCHED[r.code] || [];
+  const emos = EMOTIONS.map((e) => `
+    <div class="emo${patch.includes(e) ? " patched" : ""}" title="${e}">
+      <img src="/avatars/${r.code}/${e}.webp" alt="${e}" loading="lazy" />
+      <span>${e}</span>
+    </div>`).join("");
+  el.innerHTML = `
+    <div class="card-top">
+      <div class="stage"><img src="/avatars/${r.code}/正常.webp" alt="${r.name}" /></div>
+      <div class="meta">
+        <div class="name">${r.name}</div>
+        <div class="role">${r.role}</div>
+        <div class="info">${r.info}</div>
+        <div class="stats"><span>人设 <b>${r.chars}</b> 字</span><span>表情 <b>${EMOTIONS.length}</b> 张</span></div>
+      </div>
+    </div>
+    <div class="emos">${emos}</div>`;
+  grid.appendChild(el);
+}
+</script>
+</body>
+</html>

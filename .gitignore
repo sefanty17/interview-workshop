@@ -1,0 +1,36 @@
+node_modules/
+dist/
+# 验收用的临时构建输出（npx vite build --outDir dist-xxx），不入库
+dist-*/
+.vite/
+*.log
+
+# LingChat 参考源码（4285 个文件，只读参照，不入库）
+references/
+
+# 运行时与工具链缓存
+deeptutor-runtime/
+.tmp/
+.venv-deeptutor/
+.workbuddy/
+
+# 执行过程产出的截图（基准截图在 docs/design/screenshots 下，保留）
+/screenshots/
+
+# 后端构建产物与 H2 运行时库文件
+backend/target/
+backend/data/
+
+# 本地密钥与私有配置（模板见 backend/src/main/resources/application-local.yml.example）
+application-local.yml
+.env
+.env.local
+
+# 旧版本库备份（2026-10-23 重建仓库时遗留，不入库）
+.git-backup-*/
+
+# 课设材料（报告 docx / 答辩 pptx / 题目汇编等大件，含个人信息，不随仓库分发）
+# 本地备份位置：D:\cxdownload\课设材料-备份\
+docs/课设材料/
+/*.docx
+/*.pptx

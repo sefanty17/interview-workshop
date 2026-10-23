@@ -1,0 +1,239 @@
+@import "tailwindcss";
+
+@theme {
+  /* 字体配置 */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* 用户自定义字体名（为空走 --font-sans 默认栈）；运行时由设置覆盖 */
+  --font-app: "";
+
+  /* 颜色配置 */
+  --color-brand: var(--accent-color);
+
+  /* 动画配置 */
+  --animate-blob: blob 7s infinite;
+  --animate-fade-in-up: fadeInUp 0.8s ease-out forwards;
+  --animate-asr-breathe: asr-breathe 1.6s ease-in-out infinite;
+}
+
+@font-face {
+  font-family: "Maoken Assorted Sans";
+  src: url("/fonts/MaokenAssortedSans.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --accent-color: #79d9ff;
+}
+
+/* 滚动条（照抄 LingChat base.css） */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--accent-color); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-color); }
+
+/* 毛玻璃（照抄 LingChat） */
+.glass-effect {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.125);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1), inset 0 1px 1px rgba(255, 255, 255, 0.1);
+}
+
+/* 玻璃输入框（照抄 LingChat） */
+.glass-input {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.625rem 0.75rem;
+  font-size: 0.875rem;
+  color: #fff;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.glass-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(121, 217, 255, 0.2);
+}
+.glass-input option, .glass-input optgroup { background: #16202c; color: #fff; }
+
+/* big 按钮（照抄 LingChat Button type="big"） */
+.btn-big {
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 1rem;
+  font-weight: 700;
+  border-radius: 0.5rem;
+  border: none;
+  cursor: pointer;
+  background: #e9ecef;
+  color: #495057;
+  transition: all 0.2s ease-in-out;
+}
+.btn-big:hover {
+  background: var(--accent-color);
+  color: #fff;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(121, 217, 255, 0.4);
+}
+
+/* ===== range 滑块（主题色圆点 + 灰白轨道）===== */
+.lc-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  outline: none;
+  cursor: pointer;
+}
+.lc-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #79d9ff;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(121, 217, 255, 0.6);
+}
+.lc-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: #79d9ff;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(121, 217, 255, 0.6);
+}
+
+/* ===== nav 型按钮（照抄 LingChat Button type="nav"）===== */
+.nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 10px 15px;
+  margin: 0 5px;
+  border: none;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: color 0.3s;
+}
+.nav-btn:hover {
+  color: var(--accent-color);
+}
+.nav-btn > svg {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex-shrink: 0;
+  stroke-width: 2.5px;
+}
+
+/* ===== 对话分割线：青蓝色微光，亮段从左向右流动（照抄 LingChat）===== */
+.dialog-divider-glow {
+  height: 1px;
+  border-radius: 9999px;
+  background-color: rgba(34, 211, 238, 0.12);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(34, 211, 238, 0.12) 30%,
+    rgba(34, 211, 238, 0.55) 50%,
+    rgba(34, 211, 238, 0.12) 70%,
+    transparent 100%
+  );
+  background-size: 30% 100%;
+  background-repeat: no-repeat;
+  background-position: -30% 0;
+  animation: dialog-divider-flow 3s linear infinite;
+}
+@keyframes dialog-divider-flow {
+  from {
+    background-position: -30% 0;
+  }
+  to {
+    background-position: 130% 0;
+  }
+}
+
+/* ===== 情绪标签切换：左出右入（照抄 LingChat）===== */
+.emotion-slide-enter-active,
+.emotion-slide-leave-active {
+  transition:
+    transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    opacity 0.3s ease;
+}
+.emotion-slide-leave-active {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+.emotion-slide-enter-from {
+  transform: translateX(100%);
+  opacity: 0;
+}
+.emotion-slide-leave-to {
+  transform: translateX(-100%);
+  opacity: 0;
+}
+
+/* ===== 面试房间：台词逐字上浮 ===== */
+.lc-char {
+  display: inline-block;
+  white-space: pre;
+  animation: lc-char-rise 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes lc-char-rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.35em);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ===== B7 房间工具条：下移避开房间自带的进度条（仅追加，不改已有行） ===== */
+.free-mode-tools {
+  top: 64px;
+}
+
+/* ===== B7：safe-area 变量兜底（原版 base.css :root 定义，声效/频谱的 calc() 依赖） ===== */
+:root {
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
+}
+
+/* ===== E5b：`.main-box`（原版 MainChat.vue 里没有 scoped 的全局类） =====
+   试玩层（PreviewStage）直接复用这个类，让 GameDialog 贴在屏幕底部、四个游戏层
+   按「背景 → 立绘 → 附加 UI → 对话框」叠在同一个铺满视口的舞台里。
+   本项目原先把同样的布局写在 InterviewRoomView 的根元素上（没有这个类名），
+   这里照原版补一份，保证 `class="main-box"` 这两处读的是同一套规则。 */
+.main-box {
+  position: absolute;
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  overflow: hidden;
+}
