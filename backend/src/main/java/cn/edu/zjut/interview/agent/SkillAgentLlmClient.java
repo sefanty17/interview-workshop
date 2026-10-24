@@ -161,13 +161,15 @@ public class SkillAgentLlmClient {
             if (toolCalls != null && !toolCalls.isEmpty()) {
                 ArrayNode calls = node.putArray("tool_calls");
                 for (ToolCall call : toolCalls) {
-                    ObjectNode fn = calls.addObject().putObject("function");
+                    // 一条调用 = 一个数组元素。早前版本在这里写了两次 addObject()：
+                    // 第一次建出空对象（没有 id / type / function），第二次才是真内容，
+                    // DeepSeek 直接 422「messages[3]: missing field `id`」。
+                    ObjectNode item = calls.addObject();
+                    item.put("id", call.id());
+                    item.put("type", "function");
+                    ObjectNode fn = item.putObject("function");
                     fn.put("name", call.name());
                     fn.put("arguments", call.arguments());
-                    calls.add(mapper.createObjectNode()
-                            .put("id", call.id())
-                            .put("type", "function")
-                            .set("function", fn));
                 }
             }
             if (toolCallId != null) {

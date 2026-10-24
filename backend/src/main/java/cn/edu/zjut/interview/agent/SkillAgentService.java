@@ -30,6 +30,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -84,6 +85,18 @@ public class SkillAgentService {
     private static final String SCRIPT_PATH_MARKER = "/scripts/";
 
     /**
+     * 同一工具同一参数连续重复多少次就熔断（<b>本项目补充</b>，原版没有这条）。
+     *
+     * <p>原版 {@code max_tool_rounds} 默认 {@code -1}（不限，见 {@code config.rs:42}），
+     * 所以连续重复的循环只能靠这条挡：实测会话 26 模型为找"为什么说我没写"连调
+     * {@code list_files}/{@code read_file} 上百次，最后 SSE 崩掉。
+     */
+    private static final int REPEAT_TOOL_LIMIT = 5;
+
+    /** {@code .agent/} 目录名（对齐 {@code stage/mod.rs:13 AGENT_DIR}）。 */
+    private static final String AGENT_DIR = ".agent";
+
+    /**
      * 边界底线（对齐 {@code core.rs::BOUNDARY_BASELINE = include_str!("prompts/role_boundary_baseline.md")}）。
      *
      * <p>四个角色共用同一份，且必须在 system prompt <b>最前面</b>：它是"没让你做的别做"这一条
@@ -91,6 +104,12 @@ public class SkillAgentService {
      * 因为它要跟着 jar 走（资源目录里的 .md 会被打进 jar，用 {@link Path} 读不到）。
      */
     private static final String BOUNDARY_BASELINE = loadClasspathText("/agent/prompts/role_boundary_baseline.md");
+
+    /**
+     * 「我这一项是什么」（对齐 {@code core.rs:252} 的 {@code include_str!("prompts/core_run_chat.md")}）：
+     * 三个 {@code {}} 由 {@link #renderCoreRunChat} 顺序填。
+     */
+    private static final String CORE_RUN_CHAT = loadClasspathText("/agent/prompts/core_run_chat.md");
 
     /**
      * 边界补充的长度上限（对齐 {@code role.rs::BOUNDARY_MAX_CHARS}，按<b>字符</b>数不是字节数）。
@@ -189,11 +208,13 @@ public class SkillAgentService {
         this.llmClient = llmClient;
         this.lander = lander;
         this.router = new SkillAgentRouter(llmClient, configs, objectMapper);
-        // app.characters-dir 指向 game_data/characters，往上两级即项目根（原版 data_dir）；
-        // 与 CharacterCardService 同样处理「jar 在 backend/ 下、资产在项目根」的相对路径问题。
+        // app.characters-dir 指向 game_data/characters，往上一级即 game_data/；
+        // 沙箱根（原版 data_dir）就是 game_data/：剧本包在 game_data/scripts/<key>，
+        // 技能库在 game_data/skills，模型写 "game_data/scripts/<key>/.agent/…" 正好落在沙箱内。
+        // 不能再往上取一级：那是项目根的父目录，会把 scripts/<key> 推到项目外。
         Path characters = resolveExistingDir(charactersDir);
         this.gameDataDir = characters.getParent();
-        this.dataDir = this.gameDataDir == null ? Path.of("").toAbsolutePath() : this.gameDataDir.getParent();
+        this.dataDir = this.gameDataDir == null ? characters : this.gameDataDir;
     }
 
     // ============================================================
@@ -401,6 +422,23 @@ public class SkillAgentService {
                 .toList();
     }
 
+    /**
+     * 当前会话的剧本包目录：{@code <sandbox>/scripts/<scriptKey>}；没有 key 返回 {@code null}。
+     *
+     * <p>全项目<b>唯一</b>的剧本包目录推导，章节 / 设计稿 / 细节稿 / 队列都从它算（对齐原版
+     * {@code stage::derive}：{@code script_paths::resolve_script_dir(key)} → {@code script_dir/.agent/*}，
+     * 以及 {@code core.rs::queue_dir}「有快照用快照，没有就用 key 推导」）。
+     *
+     * <p><b>不做「包目录不存在就退回沙箱根」的兜底</b>：{@code .agent/} 永远在剧本包内，不在沙箱根。
+     * 包目录还不存在说明这一轮该先建包，{@code write_file} 写 {@code .agent/} 时会自动建父目录。
+     */
+    static Path scriptDir(Path sandboxDir, String scriptKey) {
+        if (sandboxDir == null || scriptKey == null || scriptKey.isBlank()) {
+            return null;
+        }
+        return sandboxDir.resolve("scripts").resolve(scriptKey).normalize();
+    }
+
     /** 清空某会话的消息（会话本身保留）。 */
     @Transactional
     public void clearConversation(Long conversationId) {
@@ -421,7 +459,7 @@ public class SkillAgentService {
         if (scriptKey == null) {
             return List.of();
         }
-        Path agentDir = gameDataDir.resolve("scripts").resolve(scriptKey).resolve(".agent");
+        Path agentDir = scriptDir(gameDataDir, scriptKey).resolve(AGENT_DIR);
         if (!Files.isDirectory(agentDir)) {
             return List.of();
         }
@@ -447,6 +485,11 @@ public class SkillAgentService {
         } catch (IOException e) {
             log.warn("[SkillAgentService] 读取流程产物失败 {}：{}", agentDir, e.getMessage());
         }
+        // 排序对齐原版 read_artifacts：设计稿恒排第一，其余按文件名（原版是「是不是设计稿」再按 name）。
+        String designName = ScriptFacts.DESIGN_REL_PATH.substring(ScriptFacts.DESIGN_REL_PATH.lastIndexOf('/') + 1);
+        artifacts.sort(Comparator
+                .comparing((AgentArtifact a) -> !a.name().equals(designName))
+                .thenComparing(AgentArtifact::name));
         return artifacts;
     }
 
@@ -493,14 +536,17 @@ public class SkillAgentService {
                 runChatTurn(conversationId, message == null ? "" : message.trim(), emitter);
             } catch (Exception e) {
                 log.warn("[SkillAgentService] 会话 {} 对话循环失败：{}", conversationId, e.toString());
-                // 兜底降级：任何没接住的异常也要收成 status + done，不许空流 / 挂住 / 500
+                // 兜底降级：任何没接住的异常也要收成 status + done，不许空流 / 挂住 / 500。
+                // 这里只能走 sendQuietly：流可能已经 complete（例如 SSE 超时或客户端已断开），
+                // 直接 send 会再抛 IllegalStateException("ResponseBodyEmitter has already completed")，
+                // 从 chatExecutor 的任务里冒出去。
+                sendQuietly(emitter, SkillAgentEvent.status("对话执行失败：" + e.getMessage()));
+                sendQuietly(emitter, SkillAgentEvent.done("", null));
                 try {
-                    send(emitter, SkillAgentEvent.status("对话执行失败：" + e.getMessage()));
-                    send(emitter, SkillAgentEvent.done("", null));
-                } catch (IOException ignored) {
-                    // 连接已断，无需再收尾
+                    emitter.complete();
+                } catch (IllegalStateException ignored) {
+                    // 已经完成，不用再收尾
                 }
-                emitter.complete();
             } finally {
                 tasks.remove(conversationId);
             }
@@ -514,11 +560,23 @@ public class SkillAgentService {
     }
 
     /**
-     * 真实的 LLM 工具调用循环（对应 {@code core.rs::run_chat} 的单轮主干）：
-     * status → 路由 → 流式补全（reasoning / message_delta）→ 工具调用循环（tool_call / tool_result，
-     * 受 maxToolRounds 限制，-1 不限）→ done（带 usage）。被 stop 置位就退出并发 status（"已停止生成"）。
+     * 真实的 LLM 工具调用循环（对应 {@code core.rs::run_chat} 的主干）：
+     * status → 路由 → 逐项（item_start → 流式补全（reasoning / message_delta）→ 工具调用循环
+     * （tool_call / tool_result，每项各自受 maxToolRounds 限制，-1 不限））→ done（带整轮 usage）。
+     * 被 stop 置位就退出并发 status（"已停止生成"）。
      */
     private void runChatTurn(Long conversationId, String userMsg, SseEmitter emitter) throws IOException {
+        runChatTurn(conversationId, userMsg, emitter, CORE_RUN_CHAT);
+    }
+
+    /**
+     * 同上，模板由调用方给（单测注入一个带标记的模板，就能在请求里认出"最后一条 user"）。
+     *
+     * <p>失败语义（对齐 {@code core.rs} 的 {@code run_item_tools(...).await?}）：某一项持久性失败
+     * 就整轮中断，由 {@link #startChat} 的兜底 catch 收成 status + done；不把前一项的正文当成
+     * 这一项的回复继续往下做。
+     */
+    void runChatTurn(Long conversationId, String userMsg, SseEmitter emitter, String coreRunChat) throws IOException {
         AgentConversation conversation = conversationRepository.findById(conversationId).orElse(null);
         if (conversation == null) {
             send(emitter, SkillAgentEvent.status("会话不存在"));
@@ -551,71 +609,189 @@ public class SkillAgentService {
         SkillAgentTools.RunContext runContext =
                 new SkillAgentTools.RunContext(conversation.getScriptKey(), existingScriptKeys);
 
-        // 路由：判断这一轮要干什么，决定工具白名单；路由失败只回话（chat），不给写工具
-        SkillAgentRouter.RoutePlan plan = router.route(
-                new SkillAgentRouter.RouteInput(userMsg, recentTurnsText(conversationId), null));
-        SkillAgentRouter.TaskKind kind = plan.items().get(0).kind();
-        List<String> allowed = SkillAgentRouter.toolsFor(kind);
-        log.info("[SkillAgentService] 会话 {} 路由：{} 项，首轮任务={}，判据={}，工具={}",
-                conversationId, plan.items().size(), kind.key(),
-                plan.reason() == null ? "（无）" : plan.reason(), String.join("/", allowed));
+        // 路由：判断这一轮要干什么，排出有序队列；路由失败只回话（chat），不给写工具。
+        // 输入四段齐全（对齐 router.rs:154-194）：剧本现状（key / 设计稿章节 / 已落盘章节）+ 上一轮欠账
+        //   + 上两句对话 + 用户这一句。缺了现状与欠账，模型不知道后面该接什么，就永远只排 1 项。
+        String routeScriptKey = conversation.getScriptKey();
+        Path routeScriptDir = scriptDir(sandboxDir, routeScriptKey);
+        // 账本的作用域与物证一致：都以剧本包目录为准（.agent/ 不在沙箱根）
+        Path queueDir = scriptDir(sandboxDir, routeScriptKey);
+        SkillAgentRouter.RoutePlan plan = router.route(new SkillAgentRouter.RouteInput(
+                userMsg,
+                recentTurnsText(conversationId),
+                null,
+                routeScriptKey,
+                ScriptFacts.planChapters(routeScriptDir),
+                lander.writtenChapterIds(routeScriptKey, routeScriptDir),
+                // 队列：上一轮排过、还没做完的（对齐 stage/queue.rs::readQueueProgress → router 的【上一轮排过】段）
+                StageQueue.readQueueProgress(queueDir)));
+        List<SkillAgentRouter.QueueItem> items = plan.items();
+        // 登记时刻：整轮一个，各项共用（对齐 core.rs 的 turn_start / registered_at）
+        Instant turnStart = Instant.now();
+        StageQueue.writeQueue(queueDir, items, turnStart, lander);
+        log.info("[SkillAgentService] 会话 {} 路由：{} 项，任务={}，判据={}",
+                conversationId, items.size(),
+                items.stream().map(i -> i.kind().key()).toList(),
+                plan.reason() == null ? "（无）" : plan.reason());
 
-        // 消息表：system + 历史 + 本轮任务书
-        List<SkillAgentLlmClient.Msg> messages = new ArrayList<>();
-        messages.add(SkillAgentLlmClient.Msg.system(
-                buildSystemPrompt(config, allowed, sandboxDir, skillsDir, SkillAgentRouter.roleFor(kind))));
+        // 历史（只回放 user / assistant 的正文；tool 行靠工具调用重新产生，不进上下文）：
+        // 各项共用同一份，本项的任务块与 core_run_chat 以尾部两条 user 追加。
+        List<SkillAgentLlmClient.Msg> baseHistory = new ArrayList<>();
         for (AgentMessage row : messageRepository.findByConversationIdOrderByIdAsc(conversationId)) {
-            // 只回放 user / assistant 的正文；tool 行靠工具调用重新产生，不进上下文
             if (!"user".equals(row.getRole()) && !"assistant".equals(row.getRole())) {
                 continue;
             }
             if (row.getContent() == null || row.getContent().isBlank()) {
                 continue;
             }
-            messages.add("assistant".equals(row.getRole())
+            baseHistory.add("assistant".equals(row.getRole())
                     ? SkillAgentLlmClient.Msg.assistant(row.getContent())
                     : SkillAgentLlmClient.Msg.user(row.getContent()));
         }
-        messages.add(SkillAgentLlmClient.Msg.user(buildTaskBlock(
-                kind, plan.items().get(0).target(), userMsg, runContext, sandboxDir, conversationId)));
 
         int maxRounds = config.getMaxToolRounds() < 0
                 ? Integer.MAX_VALUE
                 : Math.max(1, config.getMaxToolRounds());
-        long promptTokens = 0;
-        long completionTokens = 0;
-        long cachedTokens = 0;
         StringBuilder reply = new StringBuilder();
+        UsageAccumulator usageAccumulator = new UsageAccumulator();
+        // 二跑后仍没落地的项（第几项，从 1 起）
+        List<Integer> missedItems = new ArrayList<>();
 
+        // 逐项执行（对齐 core.rs:175-319 的 while 循环）：每项有自己的 system prompt（角色手册 +
+        // 工具白名单按项算）和自己的工具轮次，第 1 项用掉的 round 数不挤占后续项。
+        for (int idx = 0; idx < items.size(); idx++) {
+            if (cancelled.get()) {
+                send(emitter, SkillAgentEvent.status("已停止生成"));
+                break;
+            }
+            SkillAgentRouter.TaskKind kind = items.get(idx).kind();
+            String target = items.get(idx).target() == null ? "" : items.get(idx).target();
+            List<String> allowed = SkillAgentRouter.toolsFor(kind);
+            String head = itemHeader(kind, target, idx, items.size());
+            send(emitter, SkillAgentEvent.itemStart(idx + 1, items.size(), head));
+            reply.append(head);
+            log.info("[SkillAgentService] 会话 {} 第 {}/{} 项：任务={} 目标={} 工具={}",
+                    conversationId, idx + 1, items.size(), kind.key(), target, String.join("/", allowed));
+
+            List<SkillAgentLlmClient.Msg> messages = new ArrayList<>();
+            messages.add(SkillAgentLlmClient.Msg.system(
+                    buildSystemPrompt(config, allowed, sandboxDir, skillsDir, SkillAgentRouter.roleFor(kind))));
+            messages.addAll(baseHistory);
+            // ① 脚本上下文（任务书）——保留
+            messages.add(SkillAgentLlmClient.Msg.user(buildTaskBlock(
+                    kind, target, userMsg, runContext, sandboxDir, conversationId)));
+            // ② 本项任务书补在最后一条：模型最后读到的必须是"我这一项是什么"（对齐 core.rs:250-261）
+            messages.add(SkillAgentLlmClient.Msg.user(renderCoreRunChat(kind, target, idx, items.size(), coreRunChat)));
+
+            SkillAgentTools.RunContext itemRun = runContext;
+            // 【代码核对】的基准：必须在 runItemTools 之前拍（多项时第 1 项的产物会被第 2 项误判）。
+            // 剧本包目录用唯一的 scriptDir(...) 推导：.agent/ 永远在 <sandbox>/scripts/<key> 下，不在沙箱根
+            String evidenceScriptKey = resolveScriptKey(conversationId);
+            Path evidenceScriptDir = scriptDir(sandboxDir, evidenceScriptKey);
+            boolean judgeable = ItemEvidence.judgeable(kind, target);
+            ItemEvidence.Snapshot before = judgeable
+                    ? ItemEvidence.capture(kind, target, evidenceScriptDir, evidenceScriptKey, lander)
+                    : null;
+            SkillAgentLlmClient.Completion last = runItemTools(conversationId, emitter, messages, tools,
+                    itemRun, new SkillAgentTools.ItemScope(kind.producesRunnableChapters(), kind),
+                    allowed, maxRounds, usageAccumulator);
+            // 被取消且一轮都没跑：这一项没有正文（不能把上一项的文本当成本项的）
+            if (last != null && last.text() != null) {
+                reply.append(last.text());
+            }
+            // 记一次账（对齐 core.rs:284 save_queue）：这一项的工具已经跑过，按盘上事实打勾
+            StageQueue.writeQueue(queueDir, items, turnStart, lander);
+
+            // 【代码核对】二跑（对齐 core.rs:286-314）：模型说做完了，代码自己去盘上/库里核；
+            // 没看到产物就再喂一条 user 强制做一次，只跑一次、不再递归核对。
+            if (judgeable && !cancelled.get()) {
+                if (!ItemEvidence.produced(kind, target, before, evidenceScriptDir, evidenceScriptKey, lander)) {
+                    log.info("[SkillAgentService] 会话 {} 第 {} 项（{} {}）没在盘上看到产物，发起【代码核对】二跑",
+                            conversationId, idx + 1, kind.key(), target);
+                    messages.add(SkillAgentLlmClient.Msg.user(coreCheckText(kind, target)));
+                    SkillAgentLlmClient.Completion second = runItemTools(conversationId, emitter, messages, tools,
+                            itemRun, new SkillAgentTools.ItemScope(kind.producesRunnableChapters(), kind),
+                            allowed, maxRounds, usageAccumulator);
+                    if (second != null && second.text() != null) {
+                        reply.append(second.text());
+                    }
+                    // 二跑后再核一次账（对齐 core.rs:314 的第二次 save_queue）
+                    StageQueue.writeQueue(queueDir, items, turnStart, lander);
+                    // 二跑后仍未产出：不中断整轮，记进回复尾部，并在 done 前推一条 status
+                    if (!ItemEvidence.produced(kind, target, before, evidenceScriptDir, evidenceScriptKey, lander)) {
+                        log.warn("[SkillAgentService] 会话 {} 第 {} 项（{} {}）二跑后仍无产物",
+                                conversationId, idx + 1, kind.key(), target);
+                        missedItems.add(idx + 1);
+                    }
+                }
+            }
+        }
+        long promptTokens = usageAccumulator.promptTokens;
+        long completionTokens = usageAccumulator.completionTokens;
+        long cachedTokens = usageAccumulator.cachedTokens;
+
+        // 没落地的项：记进回复尾部（原版「本轮盘点」的位置），并在 done 前推一条 status 说明
+        for (Integer index : missedItems) {
+            reply.append("\n\n第 ").append(index).append(" 项没有在磁盘上看到产物，可能没做完。");
+            send(emitter, SkillAgentEvent.status("第 " + index + " 项没有在磁盘上看到产物，可能没做完"));
+        }
+
+        SkillAgentEvent.Usage usage = promptTokens + completionTokens > 0
+                ? new SkillAgentEvent.Usage(promptTokens, completionTokens,
+                        promptTokens + completionTokens, cachedTokens)
+                : null;
+        send(emitter, SkillAgentEvent.done(reply.toString(), usage));
+        emitter.complete();
+        log.info("[SkillAgentService] 会话 {} 一轮对话结束：{} 项，回复 {} 字",
+                conversationId, items.size(), reply.length());
+    }
+
+    /**
+     * 单项的工具调用循环（从改造前的单轮 for 循环原样抽出）：流式补全 → 有工具调用就执行并回填 →
+     * 没有工具调用即本项结束。每项调用一次，轮数各自独立计算。
+     *
+     * @param usage 本轮 token 用量的累加器（各项共用，done 事件带的是整轮合计）
+     * @return 本项最后一次补全（正文取它的 text）；被取消且一轮都没跑时返回 {@code null}
+     */
+    private SkillAgentLlmClient.Completion runItemTools(Long conversationId,
+                                                        SseEmitter emitter,
+                                                        List<SkillAgentLlmClient.Msg> messages,
+                                                        SkillAgentTools tools,
+                                                        SkillAgentTools.RunContext runContext,
+                                                        SkillAgentTools.ItemScope itemScope,
+                                                        List<String> allowed,
+                                                        int maxRounds,
+                                                        UsageAccumulator usage) throws IOException {
+        SkillAgentLlmClient.Completion completion = null;
+        // 同一工具同一参数的连续重复计数（本项目补充，原版 core.rs 没有这条熔断）。
+        // 原版 max_tool_rounds 默认 -1（不限，config.rs:42），只靠轮数根本停不住：
+        // 实测会话 26 里模型为了"证明自己写了"连调 list_files / read_file 138 次。
+        String lastSignature = null;
+        int repeatCount = 0;
+        boolean circuitBroken = false;
         for (int round = 0; round < maxRounds; round++) {
             if (cancelled.get()) {
                 send(emitter, SkillAgentEvent.status("已停止生成"));
                 break;
             }
             List<SkillAgentLlmClient.ToolDef> defs = tools.toolDefinitions(allowed);
-            SkillAgentLlmClient.Completion completion = llmClient.completeStream(
+            completion = llmClient.completeStream(
                     messages, defs, LlmOptions.from(configs),
                     content -> sendQuietly(emitter, SkillAgentEvent.messageDelta(content)),
                     content -> sendQuietly(emitter, SkillAgentEvent.reasoning(content)),
                     cancelled);
-            if (completion.usage() != null) {
-                promptTokens += completion.usage().promptTokens();
-                completionTokens += completion.usage().completionTokens();
-                cachedTokens += completion.usage().cachedTokens();
-            }
+            usage.add(completion.usage());
 
             if (completion.toolCalls().isEmpty()) {
                 String text = completion.text() == null ? "" : completion.text();
-                insertMessage(conversationId, "assistant", text, completion.reasoning(),
-                        promptTokens, completionTokens, null);
-                reply.append(text);
+                insertMessage(conversationId, "assistant", text, completion.reasoning(), null, null, null);
                 break;
             }
 
             // 有工具调用：先落 assistant 行（含 tool_calls，deriveScriptKey 反推剧本 key 靠它）
             String toolCallsJson = toolCallsJson(completion.toolCalls());
             insertMessage(conversationId, "assistant", completion.text(), completion.reasoning(),
-                    promptTokens, completionTokens, toolCallsJson);
+                    null, null, toolCallsJson, null);
             messages.add(SkillAgentLlmClient.Msg.assistantWithTools(completion.text(), completion.toolCalls()));
 
             for (SkillAgentLlmClient.ToolCall call : completion.toolCalls()) {
@@ -626,6 +802,24 @@ public class SkillAgentService {
                 send(emitter, SkillAgentEvent.toolCall(call.id(), call.name(),
                         args == null ? null : objectMapper.convertValue(args, Map.class), call.arguments()));
 
+                // 熔断（本项目补充）：同一工具 + 同一参数连续第 N 次就掐掉这一项，不再喂给模型。
+                // 模型陷入「反复读同一个文件找原因」时，轮数上限是 -1 拦不住，只能看重复签名。
+                String signature = call.name() + " " + (call.arguments() == null ? "" : call.arguments().strip());
+                if (signature.equals(lastSignature)) {
+                    repeatCount++;
+                } else {
+                    lastSignature = signature;
+                    repeatCount = 1;
+                }
+                if (repeatCount >= REPEAT_TOOL_LIMIT) {
+                    log.warn("[SkillAgentService] 会话 {} 同一工具同一参数连续重复 {} 次（{}），中断本项工具循环",
+                            conversationId, repeatCount, abbreviate(signature, 200));
+                    sendQuietly(emitter, SkillAgentEvent.status(
+                            "同一个调用连续重复 " + repeatCount + " 次，已中断这一项的工具循环"));
+                    circuitBroken = true;
+                    break;
+                }
+
                 SkillAgentTools.ToolResult result;
                 if (call.arguments() != null && !call.arguments().isBlank() && args == null) {
                     // 参数不是合法 JSON（多半被截断），不执行（对齐 core.rs::run_one_tool_call 的 args_invalid 分支）
@@ -633,9 +827,7 @@ public class SkillAgentService {
                             "这次调用没有执行：参数不是合法 JSON，多半是内容太长被截断。收到的参数开头：\n"
                                     + abbreviate(call.arguments(), 400));
                 } else {
-                    result = tools.execute(runContext,
-                            new SkillAgentTools.ItemScope(kind.producesRunnableChapters(), kind),
-                            allowed, call.name(), args);
+                    result = tools.execute(runContext, itemScope, allowed, call.name(), args);
                 }
                 send(emitter, SkillAgentEvent.toolResult(call.id(), call.name(), result.ok(),
                         result.output(), result.error()));
@@ -643,22 +835,120 @@ public class SkillAgentService {
                 insertMessage(conversationId, "tool", result.output(), null, null, null, call.id());
 
                 // 写 story_config.yaml 所在剧本包 → 给会话绑定 key（对齐 tools.rs::bind_script_key_if_new）
-                if ("write_file".equals(call.name()) && result.ok() && conversation.getScriptKey() == null) {
-                    bindScriptKeyIfNew(conversationId, conversation, args);
+                if ("write_file".equals(call.name()) && result.ok()) {
+                    bindScriptKeyIfNew(conversationId, args);
                 }
+            }
+            if (circuitBroken) {
+                break;
             }
             if (round == maxRounds - 1 && !cancelled.get()) {
                 send(emitter, SkillAgentEvent.error("已达到最大工具调用轮数（" + maxRounds + "），已停止"));
             }
         }
+        return completion;
+    }
 
-        SkillAgentEvent.Usage usage = promptTokens + completionTokens > 0
-                ? new SkillAgentEvent.Usage(promptTokens, completionTokens,
-                        promptTokens + completionTokens, cachedTokens)
-                : null;
-        send(emitter, SkillAgentEvent.done(reply.toString(), usage));
-        emitter.complete();
-        log.info("[SkillAgentService] 会话 {} 一轮对话结束：回复 {} 字", conversationId, reply.length());
+    // ============================================================
+    // 一项的标题与「我这一项是什么」（对齐 core.rs::item_header / stage/prompt.rs::render_text_of）
+    // ============================================================
+
+    /**
+     * 一项的标题（{@code item_start} 的 {@code title}，同时作为回复里的分段头）：
+     * {@code 【第 i/N 项】任务标签：目标}，目标为空时只写标签。
+     */
+    static String itemHeader(SkillAgentRouter.TaskKind kind, String target, int idx, int total) {
+        return "【第 " + (idx + 1) + "/" + total + " 项】" + renderTextOf(kind, target);
+    }
+
+    /**
+     * 一项的正文（{@code 类型标签：目标}），视图与注入的进度行共用；目标为空时只写类型标签
+     * （逐字对齐 {@code stage/prompt.rs::render_text_of}）。
+     */
+    static String renderTextOf(SkillAgentRouter.TaskKind kind, String target) {
+        String trimmed = target == null ? "" : target.trim();
+        if (trimmed.isEmpty()) {
+            return kind.label();
+        }
+        return kind.label() + "：" + trimmed;
+    }
+
+    /**
+     * 本项任务书（原版 {@code core.rs:250-261}）：{@code core_run_chat.md} 的三个 {@code {}} 依次填
+     * 「类型 + 对象」/ 第几项 / 共几项 / 本项点名的对象。
+     *
+     * <p><b>它必须是整个 messages 的最后一条</b> —— 模型最后读到的必须是"我这一项是什么"；
+     * 只给一份事实陈述，模型读完文件就会反问用户、一个字不写。
+     *
+     * <p>文件里的 {@code Chapters/<id>.yaml} 是原版路径，按 {@link RoleScope} 那套口径换成
+     * 本项目的落点（{@code interview_chapter 表}）。
+     */
+    String renderCoreRunChat(SkillAgentRouter.TaskKind kind, String target, int idx, int total) {
+        return renderCoreRunChat(kind, target, idx, total, CORE_RUN_CHAT);
+    }
+
+    /**
+     * 同上，模板由调用方给。
+     *
+     * <p>P0-4 顺带的收尾约束：实测模型写完后会反问「要不要转成章节？」——原版靠队列让模型
+     * 知道后面还有项，队列未迁期间先在渲染结果最后压一句「不要问用户」。
+     * {@code Chat} / {@code Collect} / {@code Summarize} 不加：它们的产物本来就是向用户提问
+     * （见 {@link RoleScope#boundaryNote}）。
+     */
+    String renderCoreRunChat(SkillAgentRouter.TaskKind kind, String target, int idx, int total, String template) {
+        String trimmed = target == null ? "" : target.trim();
+        String text = template
+                .replace("Chapters/<id>.yaml", "interview_chapter 表里 code=<id> 的那一行")
+                .replace("Chapters/", "interview_chapter 表");
+        String rendered = fillPlaceholders(text,
+                renderTextOf(kind, trimmed),
+                String.valueOf(idx + 1),
+                String.valueOf(total),
+                trimmed.isEmpty() ? "（未指明）" : trimmed);
+        // 逐字对齐原版：模板后面不追加任何一句自造的话（曾加过一条「本项到此结束…」的收尾尾巴，已删）
+        return rendered;
+    }
+
+    /**
+     * 【代码核对】那条 user 消息（逐字照抄 {@code core.rs:289-295}，只把 {@code Chapters/<id>.yaml}
+     * 换成本项目的落点 {@code interview_chapter 表里 code=<id> 的那一行}，与 {@link RoleScope} 同口径）。
+     *
+     * <p>原版 Rust 的 {@code \} 续行会把缩进去掉，这里同样用字符串拼接接回来，不引入换行。
+     */
+    static String coreCheckText(SkillAgentRouter.TaskKind kind, String target) {
+        return ("【代码核对】这一项在盘上还没有看到产物（" + renderTextOf(kind, target) + "）。"
+                + "**增 / 改类**要看到文件在、或被改过；"
+                + "**删除类**要看到它真的不见了。没落地就不算做完 —— 要么现在就真的做（该调的工具要调，"
+                + "比如删除要 `delete_file` 返回成功），要么在回执里说清为什么做不到；**不要写「已做完」**。");
+    }
+
+    /** 依序替换模板里的位置占位符 {@code {}}（与 Rust {@code format!} 的顺序语义一致）。 */
+    private static String fillPlaceholders(String template, String... args) {
+        String out = template;
+        for (String arg : args) {
+            int index = out.indexOf("{}");
+            if (index < 0) {
+                break;
+            }
+            out = out.substring(0, index) + arg + out.substring(index + 2);
+        }
+        return out;
+    }
+
+    /** 整轮 token 用量的累加器（各项共用一份，done 事件带整轮合计）。 */
+    private static final class UsageAccumulator {
+        private long promptTokens;
+        private long completionTokens;
+        private long cachedTokens;
+
+        void add(SkillAgentLlmClient.Usage usage) {
+            if (usage == null) {
+                return;
+            }
+            promptTokens += usage.promptTokens();
+            completionTokens += usage.completionTokens();
+            cachedTokens += usage.cachedTokens();
+        }
     }
 
     /** 上两句纯对话（旧的前）：路由的 recent 输入。 */
@@ -730,12 +1020,16 @@ public class SkillAgentService {
      */
     private String buildTaskBlock(SkillAgentRouter.TaskKind kind, String target, String userMsg,
                                   SkillAgentTools.RunContext run, Path sandboxDir, Long conversationId) {
-        ScriptFacts facts = collectFacts(run.scriptKey(), target, sandboxDir);
-        ScriptFacts.Handoff handoff = ScriptFacts.reconcile(kind, facts);
+        ScriptFacts facts = collectFacts(run.scriptKey(), target, sandboxDir);        ScriptFacts.Handoff handoff = ScriptFacts.reconcile(kind, facts);
         List<AgentMessage> history = messageRepository.findByConversationIdOrderByIdAsc(conversationId);
 
         StringBuilder sb = new StringBuilder();
         sb.append("【本轮任务】（第 1/1 项 · ").append(kind.label()).append("）\n");
+        // 本项资格：这一项能改哪些文件、不能碰哪些（对齐 role.rs::scope_note），必须压在用户原话之前
+        String scopeNote = RoleScope.scopeNote(kind, target);
+        if (!scopeNote.isBlank()) {
+            sb.append("【本项资格】这一项的权限：").append(scopeNote.strip()).append('\n');
+        }
         sb.append("用户这一句：").append(userMsg).append('\n');
         if (target != null && !target.isBlank()) {
             sb.append("涉及章节：").append(target).append('\n');
@@ -749,16 +1043,26 @@ public class SkillAgentService {
         if (receiptNote != null) {
             sb.append(receiptNote);
         }
+        // 本项产出物要求 + 只读轮禁令（对齐 role.rs::directive / boundary_note）：两段都空就整段不出现
+        String directive = RoleScope.directive(kind);
+        String boundaryNote = RoleScope.boundaryNote(kind);
+        if (!directive.isBlank()) {
+            sb.append("\n【本项产出物要求】\n").append(directive).append('\n');
+        }
+        if (boundaryNote != null) {
+            sb.append("\n【不许做的】\n").append(boundaryNote).append('\n');
+        }
         return sb.toString();
     }
 
-    /** 从库（已落盘章节）与沙箱（设计稿 / 细节稿）联合取事实。 */
+    /**
+     * 从库（已落盘章节）与剧本包（设计稿 / 细节稿）联合取事实。
+     *
+     * <p>剧本包目录一律走 {@link #scriptDir(Path, String)}：{@code .agent/} 在剧本包内，不在沙箱根。
+     */
     private ScriptFacts collectFacts(String scriptKey, String target, Path sandboxDir) {
-        Path scriptDir = null;
-        if (scriptKey != null && !scriptKey.isBlank()) {
-            scriptDir = sandboxDir.resolve("scripts").resolve(scriptKey).normalize();
-        }
-        return ScriptFacts.collect(scriptDir, target, lander.writtenChapterIds(scriptKey));
+        return ScriptFacts.collect(scriptDir(sandboxDir, scriptKey), target,
+                lander.writtenChapterIds(scriptKey, scriptDir(sandboxDir, scriptKey)));
     }
 
     /** 事实的给模型看的说法（只陈述现状，不给建议 —— 建议在交接单里）。 */
@@ -841,8 +1145,17 @@ public class SkillAgentService {
         return array.toString();
     }
 
-    /** {@code /scripts/<key>/…} 的写入 → 绑定会话剧本 key（对齐 tools.rs::bind_script_key_if_new）。 */
-    private void bindScriptKeyIfNew(Long conversationId, AgentConversation conversation, JsonNode args) {
+    /**
+     * {@code /scripts/<key>/…} 的写入 → 绑定会话剧本 key（对齐 tools.rs::bind_script_key_if_new）。
+     *
+     * <p>每项开跑前都从库里重读，不靠手里那个 {@link AgentConversation} 对象的 {@code scriptKey}：
+     * 第 1 项绑上之后，第 2 项手里的对象还是旧值，会把绑定覆盖掉。
+     */
+    private void bindScriptKeyIfNew(Long conversationId, JsonNode args) {
+        AgentConversation conversation = conversationRepository.findById(conversationId).orElse(null);
+        if (conversation == null || conversation.getScriptKey() != null) {
+            return;
+        }
         String path = SkillAgentTools.textArg(args, "path");
         int index = path.indexOf("/scripts/");
         if (index < 0) {
@@ -941,6 +1254,22 @@ public class SkillAgentService {
 
     private AgentMessage insertMessage(Long conversationId, String role, String content, String reasoning,
                                        Long promptTokens, Long completionTokens, String toolCallId) {
+        return insertMessage(conversationId, role, content, reasoning,
+                promptTokens, completionTokens, null, toolCallId);
+    }
+
+    /**
+     * 同上，额外带 {@code tool_calls}。
+     *
+     * <p><b>两列不能混用</b>（对齐 OpenAI 消息格式 + {@code schema-h2.sql:236-237}）：
+     * {@code tool_calls} 是 assistant 行发出的调用列表（CLOB），
+     * {@code tool_call_id} 是 tool 行回填的单个调用 id（VARCHAR(64)）。
+     * 早前版本把调用列表的 JSON 塞进 {@code tool_call_id}，只要模型一发起工具调用就
+     * {@code Value too long for column "tool_call_id VARCHAR(64)"}，整轮对话只剩用户那句。
+     */
+    private AgentMessage insertMessage(Long conversationId, String role, String content, String reasoning,
+                                       Long promptTokens, Long completionTokens,
+                                       String toolCalls, String toolCallId) {
         AgentMessage message = new AgentMessage();
         message.setConversationId(conversationId);
         message.setRole(role);
@@ -949,6 +1278,7 @@ public class SkillAgentService {
         message.setReasoning(reasoning);
         message.setPromptTokens(promptTokens);
         message.setCompletionTokens(completionTokens);
+        message.setToolCalls(toolCalls);
         message.setToolCallId(toolCallId);
         message.setCreatedAt(LocalDateTime.now());
         return messageRepository.save(message);

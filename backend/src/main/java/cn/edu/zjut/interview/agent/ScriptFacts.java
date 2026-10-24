@@ -245,6 +245,19 @@ public record ScriptFacts(
                 hasDraft);
     }
 
+    /**
+     * 设计稿里列出的章节 code（按设计稿顺序）；文件不在或读不出章节列表就是空表。
+     *
+     * <p>路由要看「设计稿已列出章节」这一行（{@code router.rs:161-165}），
+     * 事实本身只记 {@code hasPlan} 一个布尔，所以这里再解析一遍（每轮一次，可忽略）。
+     */
+    public static List<String> planChapters(Path scriptDir) {
+        if (scriptDir == null) {
+            return List.of();
+        }
+        return parsePlan(readOrEmpty(scriptDir.resolve(DESIGN_REL_PATH)));
+    }
+
     /** 章节号归一后相等（{@code 03} 与 {@code 3} 算同一章）。 */
     private static boolean containsChapter(List<String> ids, String wanted) {
         return ids.stream().anyMatch(id -> sameChapter(id, wanted));

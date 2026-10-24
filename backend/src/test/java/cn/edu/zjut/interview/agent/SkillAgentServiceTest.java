@@ -192,6 +192,23 @@ class SkillAgentServiceTest {
         assertTrue(messageRepository.findAll().isEmpty(), "消息表清干净");
     }
 
+    // ───────────────── 沙箱根 = game_data/（P0-7） ─────────────────
+
+    /**
+     * 沙箱根必须是 {@code game_data/}：剧本包在 {@code game_data/scripts/<key>}，模型写的
+     * {@code game_data/scripts/<key>/.agent/chapter-details.md} 才落在沙箱内、才和核对器看到的
+     * 是同一个文件。取到项目根或它的父目录都会让 {@code scriptDir} 指到别处。
+     */
+    @Test
+    void sandboxRootIsGameDataDir() {
+        AgentDefaultDirs dirs = service.getDefaultDirs();
+        java.nio.file.Path sandbox = java.nio.file.Path.of(dirs.sandboxDir());
+        assertEquals("game_data", sandbox.getFileName().toString(), "沙箱根是 game_data/");
+        assertEquals(sandbox.resolve("skills").normalize(),
+                java.nio.file.Path.of(dirs.skillsDir()).normalize(), "技能库在沙箱内");
+        assertTrue(java.nio.file.Files.isDirectory(sandbox.resolve("scripts")), "剧本包目录在沙箱内");
+    }
+
     // ───────────────── 工具 ─────────────────
 
     private ConversationInfo newConversation(String title, String scriptKey) {

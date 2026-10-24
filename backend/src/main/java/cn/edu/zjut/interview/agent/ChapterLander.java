@@ -18,11 +18,15 @@ import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * 落盘桥接：把剧本编辑器 AI 写出的章节 YAML 落进 {@code interview_chapter} 表，并当场自检。
@@ -288,8 +292,41 @@ public class ChapterLander {
         return Optional.of("已从剧本库删掉章节 `" + chapterId + "`（剧本 `" + scriptKey + "`）");
     }
 
-    /** 库里已有的章节 id 升序（给 story config 那侧判断「下一个待写章」用）。 */
+    /**
+     * 「已落盘」的章节 id。
+     *
+     * <p><b>按原版口径 = {@code Chapters/} 下真实存在的文件</b>（{@code stage::derive} 扫的就是目录），
+     * 不是库里所有行：本项目的种子章节（{@code intro} / {@code basic} / …）是预置演示数据，
+     * 盘上并没有对应 YAML，把它们算进"已落盘"，路由与自检就会看到一堆实际上没有的章节
+     * （实测：模型因此认定 {@code 01} 已存在，一直去 list_files 找、一次都不写）。盘上的 YAML 与库里那一行由 {@link #land} 一起维护，两者同步。
+     */
     public List<String> writtenChapterIds(String scriptKey) {
+        return writtenChapterIds(scriptKey, null);
+    }
+
+    /**
+     * 同上，但可以在给了剧本包目录时直接扫盘（对齐原版 {@code stage::derive} 看的就是目录）。
+     *
+     * @param scriptDir 剧本包目录；{@code null} 时退回"库里所有章节"（无目录可用时的保守取法）
+     */
+    public List<String> writtenChapterIds(String scriptKey, Path scriptDir) {
+        if (scriptDir != null) {
+            Path chaptersDir = scriptDir.resolve("Chapters");
+            if (!Files.isDirectory(chaptersDir)) {
+                return List.of();
+            }
+            try (Stream<Path> walk = Files.walk(chaptersDir, 2)) {
+                return walk.filter(Files::isRegularFile)
+                        .map(p -> chaptersDir.relativize(p).toString().replace('\\', '/'))
+                        .filter(name -> name.endsWith(".yaml") || name.endsWith(".yml"))
+                        .map(name -> name.substring(0, name.lastIndexOf('.')))
+                        .sorted()
+                        .toList();
+            } catch (IOException e) {
+                log.warn("[ChapterLander] 扫章节目录失败 {}：{}", chaptersDir, e.getMessage());
+                return List.of();
+            }
+        }
         if (scriptKey == null || scriptKey.isBlank()) {
             return List.of();
         }

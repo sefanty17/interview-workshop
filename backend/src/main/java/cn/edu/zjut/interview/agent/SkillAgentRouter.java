@@ -160,8 +160,34 @@ public class SkillAgentRouter {
         }
     }
 
-    /** 路由输入（对齐 {@code router.rs::RouteInput}，只留本项目落点）。 */
-    public record RouteInput(String userMsg, String recentTurns, String hubDoc) {
+    /**
+     * 路由输入（对齐 {@code router.rs::RouteInput}）。
+     *
+     * <p>原版的 {@code snapshot} 折成三段：{@code scriptKey} / {@code planChapters} /
+     * {@code writtenChapters}；{@code queue} 是上一轮排过还没做完的项的人话。
+     * 只给「上两句对话 + 用户这一句」时，模型看不到剧本现状和欠账，就会永远只排 1 项、
+     * 每一步都得用户重新说一遍。
+     *
+     * @param scriptKey       已绑定的剧本 code；{@code null} / 空 = 还没绑定
+     * @param planChapters    设计稿列出的章节 code；无则空表
+     * @param writtenChapters 已落盘章节 code；无则空表
+     * @param queue           上一轮欠账的人话；可空（空则整段不出现）
+     */
+    public record RouteInput(String userMsg, String recentTurns, String hubDoc,
+                             String scriptKey,
+                             List<String> planChapters,
+                             List<String> writtenChapters,
+                             String queue) {
+
+        public RouteInput {
+            planChapters = planChapters == null ? List.of() : List.copyOf(planChapters);
+            writtenChapters = writtenChapters == null ? List.of() : List.copyOf(writtenChapters);
+        }
+
+        /** 三参重载：没有剧本现状、没有欠账（保留给只关心对话的调用点）。 */
+        public RouteInput(String userMsg, String recentTurns, String hubDoc) {
+            this(userMsg, recentTurns, hubDoc, null, List.of(), List.of(), "");
+        }
     }
 
     // ───────────────────────── route ─────────────────────────
@@ -239,14 +265,51 @@ public class SkillAgentRouter {
             其余类型要么只读，要么只能写 `.agent/` 下的稿子。所以「这一轮要不要产出能跑的章节」
             必须判断清楚：用户没明说要落盘，就排 `outline` / `draft_chapter`。""";
 
-    private String buildRouterUser(RouteInput input) {
+    /**
+     * 用户段（1:1 迁移自 {@code router.rs:154-194 build_router_user}），四段按序拼：
+     * 【剧本现状】→【上一轮排过、还没做完的】→【上两句对话】→【用户这一句】。
+     *
+     * <p>后两段为空时整段不出现，与 Rust 原版一致。措辞逐字照抄原版，不要改写。
+     */
+    String buildRouterUser(RouteInput input) {
         StringBuilder out = new StringBuilder("【剧本现状】\n");
-        out.append("剧本：还没绑定（用户可能想新建一个）\n");
+        String scriptKey = input.scriptKey();
+        if (scriptKey != null && !scriptKey.isBlank()) {
+            out.append("剧本：").append(scriptKey).append('\n');
+        } else {
+            out.append("剧本：还没绑定（用户可能想新建一个）\n");
+        }
+        if (input.planChapters().isEmpty()) {
+            out.append("设计稿：无（或没列出章节）\n");
+        } else {
+            out.append("设计稿已列出章节：").append(String.join(" ", input.planChapters())).append('\n');
+        }
+        out.append("已落盘章节：")
+                .append(input.writtenChapters().isEmpty() ? "（无）" : String.join(" ", input.writtenChapters()))
+                .append('\n');
+
+        String queue = input.queue();
+        if (queue != null && !queue.trim().isEmpty()) {
+            out.append("\n【上一轮排过、还没做完的（**只是状态，不是本轮的活**）】\n")
+                    .append("除非用户这一句是在让你接着做（「继续」「那把它弄完」「剩下的做完」），\n")
+                    .append("否则**不要**把它们排进 `tasks` —— 他这一句说的是什么，就排什么。\n");
+            out.append(queue.trim()).append('\n');
+        }
         if (input.recentTurns() != null && !input.recentTurns().isBlank()) {
             out.append("\n【上两句对话】\n").append(input.recentTurns().strip()).append('\n');
         }
         out.append("\n【用户这一句】\n").append(input.userMsg().trim());
         return out.toString();
+    }
+
+    /** 压成单行 + 截断（对齐 {@code router.rs::squash}）：多行换空格，超过 120 字符加省略号。 */
+    static String squash(String text) {
+        final int max = 120;
+        String t = text == null ? "" : text.trim().replace('\n', ' ');
+        if (t.codePointCount(0, t.length()) <= max) {
+            return t;
+        }
+        return t.substring(0, t.offsetByCodePoints(0, max)) + "…";
     }
 
     /** 路由的提交工具（对齐 {@code router.rs::submit_plan_tool}）：kind 用 enum 约束取值。 */
