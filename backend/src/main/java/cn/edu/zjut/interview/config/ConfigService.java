@@ -117,8 +117,8 @@ public class ConfigService {
     private static Map<String, ConfigSetting> buildRegistry() {
         List<ConfigSetting> settings = List.of(
                 // ===== LLM 配置 =====
-                ConfigSetting.stringSetting(ConfigKey.LLM_MODEL, "llm", "模型名", "deepseek-chat",
-                        "对话使用的模型名，对应原版 llm.model。"
+                ConfigSetting.stringSetting(ConfigKey.LLM_MODEL, "llm", "模型名", "deepseek-reasoner",
+                        "对话使用的模型名（deepseek-reasoner 才有思考链），对应原版 llm.model。"
                                 + SIMPLIFIED_PROVIDER_NOTE, false),
                 ConfigSetting.doubleSetting(ConfigKey.LLM_TEMPERATURE, "llm", "温度", 1.0, 0.0, 2.0,
                         "采样温度，越高越发散，对应原版 llm.temperature。"

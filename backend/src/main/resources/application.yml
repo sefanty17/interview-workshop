@@ -16,7 +16,7 @@ app:
     # 密钥不入库：从环境变量读，或写进 application-local.yml（已在 .gitignore 里）。
     # 本地开发：cp application-local.yml.example application-local.yml 填 key，启动加 --spring.profiles.active=local
     api-key: ${DEEPSEEK_API_KEY:}
-    model: deepseek-chat
+    model: deepseek-reasoner
     temperature: 1.0
     max-tokens: 800
     timeout-seconds: 60

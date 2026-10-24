@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 
 /**
  * 玩家身份卡，对应 DDL {@code player_identity}（对齐 LingChat {@code db/entities/player_identity.rs}
@@ -50,6 +51,13 @@ public class PlayerIdentity {
     /** 我对各个对象的出厂关系，JSON 对象：{@code {"ai:<角色code>": "...", "me:<身份id>": "..."}}。 */
     @Column(name = "relations", columnDefinition = "CLOB")
     private String relations;
+
+    /**
+     * 保存时的入参形态：编辑器传的是 Map，{@link cn.edu.zjut.interview.service.PlayerIdentityService#save}
+     * 会把它序列化成 {@link #relations} 再落库。<b>不映射到列</b>。
+     */
+    @Transient
+    private java.util.Map<String, String> relationMap;
 
     /** 当前生效的身份（同一时刻只有一个）。 */
     @Column(name = "is_current")
@@ -117,6 +125,14 @@ public class PlayerIdentity {
 
     public void setRelations(String relations) {
         this.relations = relations;
+    }
+
+    public java.util.Map<String, String> getRelationMap() {
+        return relationMap;
+    }
+
+    public void setRelationMap(java.util.Map<String, String> relationMap) {
+        this.relationMap = relationMap;
     }
 
     public Boolean getIsCurrent() {

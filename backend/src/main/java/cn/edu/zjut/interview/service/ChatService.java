@@ -91,6 +91,9 @@ public class ChatService {
     /** 身份/关系块渲染（玩家块 + 其他角色块）。 */
     private final PlayerIdentityPrompt identityPrompt;
 
+    /** 角色对各方的出厂关系（说话者侧 + 场上其他角色侧，对齐 relations.yml）。 */
+    private final InterviewerRelationService interviewerRelations;
+
     /** 上帝 Agent：多人对话的选人判定与轮数上限（单人场景不激活，零开销）。 */
     private final GodAgentCore godAgent;
 
@@ -129,6 +132,7 @@ public class ChatService {
                        ConfigService configService,
                        ObjectMapper objectMapper,
                        PlayerIdentityService playerIdentities,
+                       InterviewerRelationService interviewerRelations,
                        GodAgentCore godAgent) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
@@ -141,6 +145,7 @@ public class ChatService {
         this.objectMapper = objectMapper;
         this.playerIdentities = playerIdentities;
         this.identityPrompt = new PlayerIdentityPrompt(objectMapper);
+        this.interviewerRelations = interviewerRelations;
         this.godAgent = godAgent;
     }
 
@@ -317,16 +322,35 @@ public class ChatService {
                 injectPendingSystemMessages(messages, session.getId());
 
                 // 6~8. LlmClient.stream → SentenceSplitter → SymbolParser → 落库 + emit
+                // 思考链缓冲：对齐 producer.rs:181-193 —— 累积本轮全部 reasoning_content，
+                // 部分供应商会在流结束时重发完整快照，新片以已有内容为前缀时整体替换而非追加。
+                StringBuilder thinkingBuf = new StringBuilder();
                 ReplyPublisher publisher = new ReplyPublisher(emitter, session, speaker, userSeq);
                 SentenceSplitter splitter = new SentenceSplitter(
                         configService.getInt(ConfigKey.CHAT_MERGE_THRESHOLD),
                         configService.getInt(ConfigKey.CHAT_REPLY_COUNT));
-                llmClient.stream(messages, options, chunk -> {
+                final StringBuilder thinkingRef = thinkingBuf;
+                LlmOptions optionsWithReasoning = options.withReasoning(reasoning -> {
+                    // 同步替换/追加，语义同 producer.rs：快照前缀则整体替换
+                    String current = thinkingRef.toString();
+                    if (reasoning.startsWith(current)) {
+                        thinkingRef.setLength(0);
+                        thinkingRef.append(reasoning);
+                    } else {
+                        thinkingRef.append(reasoning);
+                    }
+                    // 对齐 emit_thinking_progress：只推字数，不推正文
+                    send(emitter, "ai:thinking",
+                            Map.of("isThinking", true, "duration", 0,
+                                    "thinkingLength", thinkingRef.codePointCount(0, thinkingRef.length())));
+                });
+                llmClient.stream(messages, optionsWithReasoning, chunk -> {
                     for (SentenceSplitter.Sentence sentence : splitter.feed(chunk)) {
                         accumulated.append(sentence.text());
                         publisher.offer(sentence);
                     }
                 });
+                publisher.setThinking(thinkingBuf.toString());
                 // 收尾句：SentenceSplitter 的 finish() 给出最后一段
                 for (SentenceSplitter.Sentence sentence : splitter.finish()) {
                     accumulated.append(sentence.text());
@@ -550,6 +574,8 @@ public class ChatService {
         private int nextSeq;
         private int published;
         private SentenceSplitter.Sentence pending;
+        /** 本轮思考链全文；对齐 generator/mod.rs:698-705，只在最终句挂到台词行。 */
+        private String thinking;
 
         private ReplyPublisher(SseEmitter emitter, InterviewSession session, Interviewer interviewer, int userSeq) {
             this.emitter = emitter;
@@ -577,6 +603,11 @@ public class ChatService {
             return published;
         }
 
+        /** 流结束后把整轮思考链交进来，只有最终句会落它（对齐 {@code if is_final}）。 */
+        private void setThinking(String thinking) {
+            this.thinking = thinking == null || thinking.isBlank() ? null : thinking;
+        }
+
         private void publish(SentenceSplitter.Sentence sentence, boolean isFinal) {
             String original = sentence.text();
             List<EmotionSegment> segments = symbolParser.parse(original);
@@ -588,7 +619,9 @@ public class ChatService {
 
             saveMessage(session.getId(), nextSeq++, InterviewMessage.ROLE_ASSISTANT,
                     segment.followingText(), segment.originalTag(), segment.predicted(), segment.motionText(),
-                    interviewerRoleId(interviewer));
+                    interviewerRoleId(interviewer),
+                    // 思考链只挂最终句（generator/mod.rs:698-705）
+                    isFinal ? thinking : null);
 
             ReplyEvent event = new ReplyEvent(
                     ReplyEvent.TYPE,
@@ -646,6 +679,18 @@ public class ChatService {
     private void saveMessage(Long sessionId, int seq, String role, String content,
                              String originalTag, String predictedEmotion, String action,
                              Integer senderRoleId) {
+        saveMessage(sessionId, seq, role, content, originalTag, predictedEmotion, action,
+                senderRoleId, null);
+    }
+
+    /**
+     * 落一条台词（带思考链）。
+     *
+     * @param thinking 本条回复的思考链，对齐 {@code line.thinking}；非最终句传 {@code null}
+     */
+    private void saveMessage(Long sessionId, int seq, String role, String content,
+                             String originalTag, String predictedEmotion, String action,
+                             Integer senderRoleId, String thinking) {
         InterviewMessage message = new InterviewMessage();
         message.setSessionId(sessionId);
         message.setSeq(seq);
@@ -654,6 +699,7 @@ public class ChatService {
         message.setOriginalTag(originalTag);
         message.setPredictedEmotion(predictedEmotion);
         message.setAction(action);
+        message.setThinking(thinking);
         message.setMsgType("text");
         message.setSenderRoleId(senderRoleId);
         // 玩家行一律带名字（对齐 memory_builder.rs「永远带名」）：
@@ -694,26 +740,55 @@ public class ChatService {
     }
 
     /**
-     * 身份/关系块（{@code player_block + peers_block}），压在整个 system prompt 末尾。
+     * 身份/关系块（{@code player_block}），压在整个 system prompt 末尾。
      *
-     * <p>作用是把「正在与你对话的那个『我』是谁」钉死，声明优先于人设与历史里关于这个人的写法。
-     * 没有身份卡时只输出名字那一段，仍然比什么都没有强 ——
-     * 多人场景下这是唯一能让模型分清"玩家"和"邻座面试官"的东西。
+     * <p>对齐 {@code bootstrap.rs::resolve_player_bootstrap} —— 这是主链路（service.rs:113）
+     * 实际用的那条路径。作用是把「正在与你对话的那个『我』是谁」钉死，
+     * 声明优先于人设与历史里关于这个人的写法。
+     *
+     * <p>注意主链路<b>不注入 peers_block</b>：peers_block 只出现在
+     * {@code persona.rs::rebuild_persona_line}（换身份 / 存身份后重建「已上场角色」的人设行），
+     * 那需要「每个上场角色各持有一条 SYSTEM 行」。本项目是单人面试、一条 system prompt，
+     * 没有这个结构，故不拼。buildPeersBlock 保留在 PlayerIdentityPrompt 里备用。
      */
     private String buildIdentityBlock(Interviewer interviewer, String userName) {
         Optional<PlayerIdentity> identity = playerIdentities.current();
         String name = identity.map(PlayerIdentity::displayName).orElse(userName);
-        String prompt = identity.map(PlayerIdentity::getPrompt).orElse(null);
+        String cardPrompt = identity.map(PlayerIdentity::getPrompt).orElse(null);
 
-        // 说话者（当前面试官）卡上写的关系：从 interviewer 侧取，键是 me:<身份id>
+        // 老卡兜底（bootstrap.rs:55-60）：身份卡 prompt 为空时，
+        // 用角色卡 system_prompt 里抽出的「我的设定」段补上。
+        String effectivePrompt;
+        if (cardPrompt == null || cardPrompt.trim().isEmpty()) {
+            String extracted = PromptAssembler
+                    .extractPlayerSetting(interviewer.getPersonaPrompt() == null
+                            ? "" : interviewer.getPersonaPrompt())
+                    .segment();
+            effectivePrompt = extracted == null ? "" : extracted;
+        } else {
+            effectivePrompt = cardPrompt;
+        }
+        String prompt = effectivePrompt.trim().isEmpty() ? null : effectivePrompt;
+
+        // 说话者（当前面试官）侧的出厂关系：对齐 runtime_relations::load_effective
+        Map<String, String> speakerRelations =
+                interviewerRelations.loadEffective(interviewer.getCode(), null);
+
+        // 身份卡上的关系：对齐 runtime_relations::identity_relations_effective（Me 说话者层）
+        Map<String, String> identityRelations = identity
+                .map(card -> identityPrompt.parseRelations(card.getRelations()))
+                .orElseGet(Map::of);
+
         PlayerIdentityPrompt.RelationView relation = null;
         if (identity.isPresent()) {
             var speaker = new PlayerIdentityPrompt.AiEndpoint(interviewer.getCode());
             var target = new PlayerIdentityPrompt.MeEndpoint(identity.get().getIdentityId());
-            relation = identityPrompt.resolveRelation(speaker, target, Map.of(),
-                    identityPrompt.parseRelations(identity.get().getRelations()), null)
+            // 对齐 bootstrap.rs:62：speaker 关系 + 身份卡关系 + 身份提示词兜底（三级优先）
+            relation = identityPrompt.resolveRelation(
+                            speaker, target, speakerRelations, identityRelations, prompt)
                     .orElse(null);
         }
+
         return identityPrompt.buildPlayerBlock(name, prompt, relation);
     }
 

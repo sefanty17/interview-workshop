@@ -46,6 +46,10 @@ public class Interviewer {
     @Column(name = "example_dialogue", columnDefinition = "CLOB")
     private String exampleDialogue;
 
+    /** 旧版示例对话（settings.yml: {@code system_prompt_example_old}），空 = 没有。 */
+    @Column(name = "system_prompt_example_old", columnDefinition = "CLOB")
+    private String systemPromptExampleOld;
+
     /**
      * 世界书（对齐角色卡目录里的 {@code worldbook.yml}）：整份 YAML 文本原样存库。
      * 空 = 不注入，行为与没有世界书时完全一致。
@@ -163,6 +167,14 @@ public class Interviewer {
 
     public void setExampleDialogue(String exampleDialogue) {
         this.exampleDialogue = exampleDialogue;
+    }
+
+    public String getSystemPromptExampleOld() {
+        return systemPromptExampleOld;
+    }
+
+    public void setSystemPromptExampleOld(String systemPromptExampleOld) {
+        this.systemPromptExampleOld = systemPromptExampleOld;
     }
 
     public String getWorldbook() {

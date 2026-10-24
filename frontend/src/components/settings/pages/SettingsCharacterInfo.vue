@@ -104,7 +104,7 @@
                 <DialogueExamplesEditor
                   v-else-if="field.type === 'examples'"
                   v-model="fieldModel(field).value"
-                  :user-name="localSettings.user_name || ''"
+                  user-name=""
                   :character-name="localSettings.ai_name || ''"
                 />
                 <textarea
@@ -183,6 +183,9 @@
                   标签展示在角色卡与角色详情头部，回车添加，点击 × 删除。
                 </p>
               </div>
+
+              <!-- 关系（AI 角色视角）：写 interviewer_relation，独立保存 -->
+              <RelationEditor v-if="activeTab === 'basic' && props.roleId" :interviewer-code="props.roleId" />
             </div>
 
             <!-- GSV 六情绪参考语音：填全的分类按情绪切换参考音色，未填全的
@@ -354,7 +357,7 @@
       <!-- 触摸区域编辑器：全屏层，保持在页面 DOM 子树内，避免点击穿透到上层关闭逻辑 -->
       <TouchRegionsEditor
         v-if="touchEditorVisible"
-        :user-name="localSettings.user_name"
+        :user-name="''"
         :body-part="localSettings.body_part"
         :clothes="draftClothes"
         @apply="onTouchRegionsApply"
@@ -378,6 +381,7 @@ import PetLayoutEditor from "../character/PetLayoutEditor.vue";
 import VoicePreview from "../character/VoicePreview.vue";
 import DialogueExamplesEditor from "../character/DialogueExamplesEditor.vue";
 import TouchRegionsEditor from "../character/TouchRegionsEditor.vue";
+import RelationEditor from "./character-info/RelationEditor.vue";
 
 const props = defineProps<{
   /** 角色 code（原版是数字 roleId，本项目用 InterviewerCode） */
@@ -477,8 +481,6 @@ const schemas: Record<string, FieldSchema[]> = {
   basic: [
     { key: "ai_name", label: "AI 名称", type: "text" },
     { key: "ai_subtitle", label: "AI 副标题", type: "text" },
-    { key: "user_name", label: "用户名称", type: "text" },
-    { key: "user_subtitle", label: "用户副标题", type: "text" },
     { key: "title", label: "角色标题", type: "text" },
     { key: "info", label: "角色介绍", type: "textarea", rows: 4 },
   ],

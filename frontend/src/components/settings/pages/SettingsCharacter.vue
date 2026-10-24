@@ -75,39 +75,128 @@
 
     <RoleArchiveProgress />
 
-    <!-- 我们独有的：我的身份（LingChat 该版本没有，业务需要） -->
+    <!-- 我的身份：换身份 = 开一段新对话（本局已开始则不能原地换） -->
     <MenuItem title="我的身份">
       <template #header>
         <Icon icon="character" :size="20" />
       </template>
 
-      <div class="rounded-2xl border border-white/20 bg-white/10 p-4 backdrop-blur-xl">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-3">
-            <span class="text-base font-bold text-white">候选人 · {{ profile.name }}</span>
-            <span class="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/70">
-              {{ profile.subtitle }}
-            </span>
-            <span class="rounded-full bg-[rgba(121,217,255,0.15)] px-2.5 py-0.5 text-xs text-[#79d9ff]">
-              当前身份
-            </span>
+      <div class="space-y-3">
+        <p class="text-xs leading-relaxed text-white/50">
+          决定「我」是谁：名字、副标题、注入聊天的身份提示词，以及和各角色的关系。可以随时切换身份，对话历史保留（剧本进行中除外）。
+        </p>
+
+        <!-- 锁定原因 -->
+        <p v-if="identityScriptBlocked" class="text-xs leading-relaxed text-red-300/80">
+          剧本进行中无法更换身份，请先结束剧情。
+        </p>
+
+        <div v-if="identityLoading" class="text-sm text-white/50">加载中...</div>
+
+        <p v-else-if="identities.length === 0" class="text-sm text-white/50">
+          还没有身份卡。点下面的按钮新建一张；不新建也能用默认身份。
+        </p>
+
+        <div v-else class="flex flex-col gap-2">
+          <div
+            v-for="item in identities"
+            :key="item.id"
+            class="flex items-start justify-between gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2"
+          >
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="truncate text-sm font-medium text-white">{{ item.name }}</span>
+                <span v-if="item.subtitle" class="truncate text-xs text-white/50">{{
+                  item.subtitle
+                }}</span>
+                <span
+                  v-if="item.is_current"
+                  class="shrink-0 rounded-full bg-[#79d9ff] px-2 py-0.5 text-[10px] text-white"
+                  >当前使用</span
+                >
+              </div>
+              <p v-if="item.prompt" class="mt-0.5 line-clamp-2 text-xs text-white/40">
+                {{ item.prompt }}
+              </p>
+              <p v-if="item.relation_count > 0" class="mt-0.5 text-[11px] text-white/35">
+                {{ item.relation_count }} 条关系
+              </p>
+            </div>
+
+            <div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+              <button
+                v-if="!item.is_current"
+                class="btn-sm"
+                :disabled="identityScriptBlocked"
+                :title="identityScriptBlocked ? '剧本进行中无法更换身份，请先结束剧情。' : ''"
+                @click="switchIdentity(item)"
+              >
+                切换身份
+              </button>
+              <button
+                v-if="!item.is_current"
+                class="btn-sm"
+                :disabled="identityScriptBlocked"
+                :title="identityScriptBlocked ? '剧本进行中无法更换身份，请先结束剧情。' : ''"
+                @click="startNewGame(item)"
+              >
+                用它开新对话
+              </button>
+              <button class="btn-sm" @click="editIdentity(item.id)">编辑</button>
+              <button class="btn-sm" @click="removeIdentity(item)">删除</button>
+            </div>
           </div>
-          <div class="flex gap-2">
-            <button
-              class="cursor-pointer rounded-full border border-white/10 bg-white/10 px-4 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20"
-              @click="openProfileEditor"
-            >
-              编辑
-            </button>
-            <button
-              class="cursor-pointer rounded-full border border-white/10 bg-white/10 px-4 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20"
-              @click="handleDeleteProfile"
-            >
-              删除
+        </div>
+
+        <button class="btn-sm" @click="startCreateIdentity">新建身份</button>
+
+        <!-- 内联编辑表单 -->
+        <div v-if="identityForm" class="space-y-3 rounded-xl border border-white/10 bg-black/20 p-3">
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs font-medium text-white/60">名字</label>
+            <input v-model="identityForm.name" class="glass-input" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs font-medium text-white/60">副标题</label>
+            <input v-model="identityForm.subtitle" class="glass-input" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs font-medium text-white/60">身份提示词</label>
+            <textarea v-model="identityForm.prompt" rows="4" class="glass-input"></textarea>
+            <p class="text-[11px] leading-relaxed text-white/40">这份设定对所有角色公开、都看得到</p>
+          </div>
+
+          <!-- 关系：我和各个 AI 角色 / 我的其他身份 -->
+          <div id="relation-block-identity" class="flex flex-col gap-2">
+            <label class="text-xs font-medium text-white/60">关系</label>
+            <p class="text-[11px] leading-relaxed text-white/40">
+              这里填的是「我」和各方的初始关系（例如「青梅竹马」「宿敌」）。游戏中的变化记录在本局存档里，不会改动身份卡。
+            </p>
+            <div v-for="(row, idx) in relationRows" :key="idx" class="flex items-center gap-2">
+              <select v-model="row.target" class="glass-input w-40 shrink-0 cursor-pointer text-sm">
+                <option
+                  v-for="option in relationOptionsFor(row)"
+                  :key="option.value"
+                  :value="option.value"
+                  :disabled="option.disabled"
+                  class="bg-[#16202c] text-white"
+                >
+                  {{ option.group ? `${option.group} · ${option.label}` : option.label }}
+                </option>
+              </select>
+              <input v-model="row.text" class="glass-input flex-1" />
+              <button class="btn-sm" @click="removeRelationRow(idx)">×</button>
+            </div>
+            <button class="btn-sm" @click="addRelationRow">+ 添加关系</button>
+          </div>
+
+          <div class="flex justify-end gap-2 pt-1">
+            <button class="btn-sm" :disabled="savingIdentity" @click="identityForm = null">取消</button>
+            <button class="btn-sm" :disabled="savingIdentity" @click="submitIdentity">
+              {{ savingIdentity ? "加载中..." : "保存" }}
             </button>
           </div>
         </div>
-        <p class="mt-2 text-sm leading-relaxed text-white/60">{{ profile.prompt }}</p>
       </div>
     </MenuItem>
 
@@ -118,63 +207,41 @@
     />
 
     <!-- 齿轮 / 详情 → 角色详情编辑大页（见 SettingsCharacterInfo），取代原先的 LcModal 占位表单 -->
-
-    <!-- 我的身份：编辑表单 -->
-    <LcModal
-      :show="profileEditorVisible"
-      title="编辑我的身份"
-      width="32rem"
-      @close="profileEditorVisible = false"
-    >
-      <label class="block space-y-2">
-        <span class="text-sm text-white/70">名字</span>
-        <input v-model="profileDraft.name" class="glass-input" maxlength="40" />
-      </label>
-      <label class="block space-y-2">
-        <span class="text-sm text-white/70">副标题</span>
-        <input v-model="profileDraft.subtitle" class="glass-input" maxlength="60" />
-      </label>
-      <label class="block space-y-2">
-        <span class="text-sm text-white/70">身份提示词</span>
-        <textarea v-model="profileDraft.prompt" class="glass-input resize-none" rows="5"></textarea>
-      </label>
-      <template #footer>
-        <div class="flex justify-end gap-3">
-          <button
-            class="cursor-pointer rounded-full border border-white/10 bg-white/10 px-4 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20"
-            @click="profileEditorVisible = false"
-          >
-            取消
-          </button>
-          <button
-            class="cursor-pointer rounded-full border border-[#79d9ff] bg-[rgba(121,217,255,0.18)] px-5 py-1.5 text-xs font-bold text-[#79d9ff] transition-colors hover:bg-[rgba(121,217,255,0.28)]"
-            @click="saveProfile"
-          >
-            保存
-          </button>
-        </div>
-      </template>
-    </LcModal>
   </MenuPage>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { Plus, Rabbit } from "@lucide/vue";
 import { Icon } from "../../base";
 import { MenuItem, MenuPage } from "../../ui";
 import CharacterCard from "../../ui/Menu/CharacterCard.vue";
 import RoleArchiveProgress from "../../ui/RoleArchiveProgress.vue";
-import LcModal from "../../ui/LcModal.vue";
 import NewCharacterModal from "../character/NewCharacterModal.vue";
 import SettingsCharacterInfo from "./SettingsCharacterInfo.vue";
 import { avatarUrl, findInterviewer, interviewers, type Interviewer } from "../../../data/interviewers";
-import { notify, setPersona, store } from "../../../store/appStore";
-import { confirmDialog } from "../../../store/dialogStore";
+import { clearSession, notify, setPersona, store } from "../../../store/appStore";
+import { alertDialog, confirmDialog } from "../../../store/dialogStore";
+import {
+  aiKey,
+  deletePlayerIdentity,
+  emptyPlayerIdentity,
+  getPlayerIdentity,
+  listPlayerIdentities,
+  meKey,
+  savePlayerIdentity,
+  setCurrentPlayerIdentity,
+  startNewGameWithIdentity,
+  type PlayerIdentity,
+  type PlayerIdentitySummary,
+} from "../../../api/playerIdentity";
+import {
+  useRelationEditor,
+  type RelationTargetOption,
+} from "../../../composables/useRelationEditor";
 
 const FAVORED_KEY = "interview-lab-favored";
-const PROFILE_KEY = "interview-lab-profile";
 /** 2 列 × 2 行；4 个角色正好一页，分页条不出现（与截图一致） */
 const PAGE_SIZE = 4;
 
@@ -244,59 +311,139 @@ function handleCreated(name: string) {
   notify(`演示版暂未开放新建角色：${name}`);
 }
 
-// ========== 我的身份（localStorage: interview-lab-profile） ==========
-interface UserProfile {
-  name: string;
-  subtitle: string;
-  prompt: string;
-}
+// ========== 我的身份（后端 REST：/api/player-identities） ==========
+const identities = ref<PlayerIdentitySummary[]>([]);
+const identityLoading = ref(false);
+const savingIdentity = ref(false);
+const identityForm = ref<PlayerIdentity | null>(null);
 
-const DEFAULT_PROFILE: UserProfile = {
-  name: "蔡智豪",
-  subtitle: "应届毕业生 · 在读",
-  prompt:
-    "计算机专业在读，熟悉 Java / Vue / MySQL，做过多个课程项目。简历摘要会注入面试官的提问上下文（P1 接入）。",
+/** 关系目标：其他 AI 角色（AI 侧）+ 我的其他身份（我侧） */
+const relationTargets = computed<RelationTargetOption[]>(() => [
+  ...interviewers.map((c) => ({
+    value: aiKey(c.code),
+    label: c.name,
+    group: "AI 角色",
+  })),
+  ...identities.value
+    .filter((i) => i.id !== identityForm.value?.id)
+    .map((i) => ({
+      value: meKey(i.id),
+      label: i.name,
+      group: "我的身份",
+    })),
+]);
+
+const {
+  rows: relationRows,
+  syncRows: syncRelationRows,
+  addRow,
+  removeRow: removeRelationRow,
+  fold: foldRelationRows,
+  optionsFor: relationOptionsFor,
+} = useRelationEditor(relationTargets);
+
+const addRelationRow = () => {
+  addRow(relationTargets.value[0]?.value ?? "");
 };
 
-function readProfile(): UserProfile {
+/** 剧本进行中不允许换身份；权威判断在后端 guard，这里只是提前禁用按钮。 */
+const identityScriptBlocked = computed(
+  () => store.session.active && store.session.mode === "script",
+);
+
+const loadIdentities = async (): Promise<void> => {
+  identityLoading.value = true;
   try {
-    const raw = JSON.parse(localStorage.getItem(PROFILE_KEY) ?? "null");
-    if (raw && typeof raw === "object") {
-      return {
-        name: typeof raw.name === "string" ? raw.name : DEFAULT_PROFILE.name,
-        subtitle: typeof raw.subtitle === "string" ? raw.subtitle : DEFAULT_PROFILE.subtitle,
-        prompt: typeof raw.prompt === "string" ? raw.prompt : DEFAULT_PROFILE.prompt,
-      };
-    }
-  } catch {
-    /* 数据损坏时回落默认值 */
+    identities.value = await listPlayerIdentities();
+  } catch (e) {
+    console.error("获取身份列表失败:", e);
+    identities.value = [];
+  } finally {
+    identityLoading.value = false;
   }
-  return { ...DEFAULT_PROFILE };
-}
+};
 
-const profile = ref<UserProfile>(readProfile());
-const profileEditorVisible = ref(false);
-const profileDraft = reactive<UserProfile>({ ...DEFAULT_PROFILE });
+const startCreateIdentity = () => {
+  const form = emptyPlayerIdentity();
+  identityForm.value = form;
+  syncRelationRows(form.relations);
+};
 
-function openProfileEditor() {
-  Object.assign(profileDraft, profile.value);
-  profileEditorVisible.value = true;
-}
+const editIdentity = async (id: string) => {
+  try {
+    const identity = await getPlayerIdentity(id);
+    if (!identity) return;
+    identityForm.value = identity;
+    syncRelationRows(identity.relations);
+  } catch (e) {
+    console.error("读取身份失败:", e);
+  }
+};
 
-function saveProfile() {
-  profile.value = { ...profileDraft };
-  localStorage.setItem(PROFILE_KEY, JSON.stringify(profile.value));
-  profileEditorVisible.value = false;
-  notify("已保存「我的身份」");
-}
+const submitIdentity = async () => {
+  const form = identityForm.value;
+  if (!form) return;
+  if (!form.name.trim()) {
+    notify("请填写名字");
+    return;
+  }
 
-async function handleDeleteProfile() {
-  const ok = await confirmDialog("删除身份", "删除后「我的身份」会回到默认值，确定删除吗？");
-  if (!ok) return;
-  profile.value = { ...DEFAULT_PROFILE };
-  localStorage.removeItem(PROFILE_KEY);
-  notify("已恢复默认身份");
-}
+  const relations = foldRelationRows();
+
+  savingIdentity.value = true;
+  try {
+    await savePlayerIdentity({ ...form, relations });
+    identityForm.value = null;
+    await loadIdentities();
+    notify("已保存身份");
+  } catch (e) {
+    void alertDialog("保存身份失败", e instanceof Error ? e.message : String(e));
+  } finally {
+    savingIdentity.value = false;
+  }
+};
+
+/** 换身份后的收尾：刷新身份列表 + 清掉当前会话（本项目没有多存档） */
+const finishIdentityChange = async (name: string) => {
+  clearSession();
+  await loadIdentities();
+  notify(`已切换到身份：${name}`);
+};
+
+const startNewGame = async (item: PlayerIdentitySummary) => {
+  if (!(await confirmDialog("开新对话", `用「${item.name}」开始一段全新对话？`))) return;
+  try {
+    await startNewGameWithIdentity(item.id);
+    await finishIdentityChange(item.name);
+  } catch (e) {
+    void alertDialog("开新对话失败", e instanceof Error ? e.message : String(e));
+  }
+};
+
+const switchIdentity = async (item: PlayerIdentitySummary) => {
+  if (!(await confirmDialog("切换身份", `切换为「${item.name}」？对话历史会保留。`))) return;
+  try {
+    await setCurrentPlayerIdentity(item.id);
+    await finishIdentityChange(item.name);
+  } catch (e) {
+    void alertDialog("切换身份失败", e instanceof Error ? e.message : String(e));
+  }
+};
+
+const removeIdentity = async (item: PlayerIdentitySummary) => {
+  if (!(await confirmDialog("删除身份", `确定删除身份「${item.name}」吗？`))) return;
+  try {
+    await deletePlayerIdentity(item.id);
+    await loadIdentities();
+  } catch (e) {
+    // 409 的 message 就是后端中文原因（被引用 / 当前身份），原样展示
+    void alertDialog("删除身份失败", e instanceof Error ? e.message : String(e));
+  }
+};
+
+onMounted(() => {
+  void loadIdentities();
+});
 </script>
 
 <style scoped>

@@ -13,6 +13,7 @@ import cn.edu.zjut.interview.domain.InterviewMessage;
  * @param originalTag 模型原样输出的情绪词
  * @param senderRoleId 说话角色：0 = 玩家、N = 角色 id、null = 旁白 / system
  *                     （对齐 {@code line.sender_role_id}）
+ * @param thinking     本条回复的思考链（对齐 {@code line.thinking}）；只有本轮最终句有，其余为 null
  */
 public record SessionMessageView(
         Integer seq,
@@ -21,7 +22,8 @@ public record SessionMessageView(
         String emotion,
         String action,
         String originalTag,
-        Integer senderRoleId) {
+        Integer senderRoleId,
+        String thinking) {
 
     public static SessionMessageView of(InterviewMessage message) {
         return new SessionMessageView(
@@ -31,6 +33,7 @@ public record SessionMessageView(
                 message.getPredictedEmotion(),
                 message.getAction(),
                 message.getOriginalTag(),
-                message.getSenderRoleId());
+                message.getSenderRoleId(),
+                message.getThinking());
     }
 }

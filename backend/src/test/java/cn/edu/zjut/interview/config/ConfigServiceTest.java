@@ -157,7 +157,7 @@ class ConfigServiceTest {
     @Test
     void missingRowUsesDefaultValue() {
         assertEquals(3, configService.getInt(ConfigKey.CHAT_REPLY_COUNT));
-        assertEquals("deepseek-chat", configService.get(ConfigKey.LLM_MODEL));
+        assertEquals("deepseek-reasoner", configService.get(ConfigKey.LLM_MODEL));
         assertEquals("", configService.get(ConfigKey.DISPLAY_FONT_FAMILY));
         assertFalse(configService.getBoolean(ConfigKey.LLM_ENABLE_THINKING));
     }

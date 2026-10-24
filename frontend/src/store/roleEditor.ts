@@ -21,8 +21,6 @@ export interface RoleSettings {
   character_folder: string;
   ai_name: string;
   ai_subtitle: string;
-  user_name: string;
-  user_subtitle: string;
   title: string;
   info: string;
   /** 我们特有的：卡片标签（角色列表页与详情头部的展示用） */
@@ -52,57 +50,28 @@ export interface RoleSettings {
   [key: string]: unknown;
 }
 
-/** 把 / 分隔的卡片描述压成中文逗号串，与 CharacterCard 的摘要同一套规则 */
-function flattenCardInfo(info: string): string {
-  return info
-    .replace(/\s*\/\s*/g, "，")
-    .replace(/([。！？；，])\s*，/g, "$1")
-    .trim();
-}
-
-/** 缺省人设提示词：由静态角色数据拼出，用户改过之后就交给覆盖层 */
-function defaultSystemPrompt(code: string): string {
-  const persona = findInterviewer(code);
-  return [
-    `你是「${persona.name}」，本次面试的${persona.displayRole}官。`,
-    `人设：${flattenCardInfo(persona.cardInfo)}`,
-    `开场：${persona.opening}`,
-    `要求：围绕候选人的简历与回答持续追问，最多追问 ${persona.followUp} 层；答案要具体、给出依据。`,
-  ].join("\n");
-}
-
-/** 缺省台词示例：用户 / 角色 标签成对出现，卡片编辑器能直接解析成两条 */
-function defaultExample(code: string): string {
-  const persona = findInterviewer(code);
-  return [
-    `用户：你好，我是来面试的候选人。`,
-    `${persona.name}：${persona.opening}`,
-    `用户：我先介绍一下我做过的项目吧。`,
-    `${persona.name}：好，挑一个你最熟悉的讲讲，我会追问里面的细节。`,
-  ].join("\n");
-}
-
+/** 一份可编辑的角色配置：字段全部来自角色卡原文（seed → data/interviewers.ts） */
 export function defaultRoleSettings(code: string): RoleSettings {
   const persona = findInterviewer(code);
   return {
     character_folder: code,
     ai_name: persona.name,
-    ai_subtitle: persona.displayRole,
-    user_name: persona.userAlias,
-    user_subtitle: "候选人",
+    ai_subtitle: persona.subtitle,
     title: persona.cardTitle,
-    info: flattenCardInfo(persona.cardInfo),
+    // dev 的 info 是 settings.yml 的多行块（`|‑`），原样保留，不压成一行
+    info: persona.cardInfoText,
     tags: [persona.displayRole, persona.subtitle].filter(Boolean),
-    system_prompt: defaultSystemPrompt(code),
-    system_prompt_example: defaultExample(code),
-    system_prompt_example_old: "",
+    // 人设全文＝角色卡设定原文，逐字；用户改过之后交给覆盖层
+    system_prompt: persona.personaPrompt,
+    system_prompt_example: persona.exampleDialogue,
+    system_prompt_example_old: persona.systemPromptExampleOld ?? "",
     avatar_mode: "image",
     scale: persona.scale,
     offset_x: persona.offsetX,
     offset_y: persona.offsetY,
     bubble_top: persona.bubbleTop,
     bubble_left: persona.bubbleLeft,
-    thinking_message: "正在思考…",
+    thinking_message: persona.thinkingMessage ?? "",
     avatar_mode_p: "image",
     pet_frameless: false,
     scale_p: persona.scale,
@@ -133,9 +102,13 @@ function writeTable(table: OverrideTable): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(table));
 }
 
-/** 读一份可编辑的角色配置（默认值 + 已保存的覆盖层） */
+/** 读一份可编辑的角色配置（默认值 + 已保存的覆盖层）。
+ *  user_name / user_subtitle 已从字段表移除（dev 5e66d3c2），老覆盖层里的残留键不取。 */
 export function loadRoleSettings(code: string): RoleSettings {
-  const override = readTable()[code] ?? {};
+  const saved = readTable()[code] ?? {};
+  const override = { ...saved };
+  delete override.user_name;
+  delete override.user_subtitle;
   return { ...defaultRoleSettings(code), ...override };
 }
 

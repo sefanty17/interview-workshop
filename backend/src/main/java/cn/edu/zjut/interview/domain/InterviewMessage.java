@@ -53,6 +53,16 @@ public class InterviewMessage {
     @Column(name = "action", columnDefinition = "CLOB")
     private String action;
 
+    /**
+     * 本条回复的思考链全文，对齐 LingChat {@code line.thinking}（{@code entities/line.rs:32}）。
+     *
+     * <p>只有<b>本轮最终句</b>才挂（{@code generator/mod.rs:698-705}：{@code if is_final}
+     * 才快照 {@code thinking_buf}），其余行为 {@code null}。思考链不进正文、不进后续上下文，
+     * 仅供历史对话折叠展示。
+     */
+    @Column(name = "thinking", columnDefinition = "CLOB")
+    private String thinking;
+
     @Column(name = "msg_type", length = 16)
     private String msgType = "text";
 
@@ -151,6 +161,14 @@ public class InterviewMessage {
 
     public void setAction(String action) {
         this.action = action;
+    }
+
+    public String getThinking() {
+        return thinking;
+    }
+
+    public void setThinking(String thinking) {
+        this.thinking = thinking;
     }
 
     public String getMsgType() {

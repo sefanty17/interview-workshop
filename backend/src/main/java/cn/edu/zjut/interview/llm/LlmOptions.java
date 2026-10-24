@@ -3,6 +3,8 @@ package cn.edu.zjut.interview.llm;
 import cn.edu.zjut.interview.config.ConfigKey;
 import cn.edu.zjut.interview.config.ConfigService;
 
+import java.util.function.Consumer;
+
 /**
  * 一次请求的生成参数，全部来自 {@link ConfigService}（规格 B4-BE §三、S-2+3 §A4）。
  *
@@ -17,9 +19,19 @@ import cn.edu.zjut.interview.config.ConfigService;
  * @param timeoutSeconds 请求超时秒数（{@code llm.timeout_secs}）
  * @param thinking       思考模式覆盖；{@code null} = 调用方没指定，请求体按「关」下发
  *                       （对齐原版 {@code LlmProviderConfig.enable_thinking} 的 serde 默认 {@code false}）
+ * @param onReasoning    思考链增量回调，可为 {@code null}。对齐 {@code LlmChunk::Reasoning}
+ *                       （{@code llm/mod.rs:101-103}）：思考链只用于展示与统计，<b>不进正文</b>。
+ *                       放在这里而不是加一个重载，是为了让 {@code stream} 的签名保持不变
+ *                       （既有测试都按 3 参数打桩）。
  */
 public record LlmOptions(String model, double temperature, double topP, int maxTokens, int timeoutSeconds,
-                         Boolean thinking) {
+                         Boolean thinking, Consumer<String> onReasoning) {
+
+    /** 兼容旧签名：不带思考链回调。 */
+    public LlmOptions(String model, double temperature, double topP, int maxTokens, int timeoutSeconds,
+                      Boolean thinking) {
+        this(model, temperature, topP, maxTokens, timeoutSeconds, thinking, null);
+    }
 
     /** 按当前设置组装参数；每次调用都读一遍，所以设置页改完下一轮对话就生效。 */
     public static LlmOptions from(ConfigService config) {
@@ -30,6 +42,11 @@ public record LlmOptions(String model, double temperature, double topP, int maxT
                 config.getInt(ConfigKey.LLM_MAX_TOKENS),
                 config.getInt(ConfigKey.LLM_TIMEOUT_SECS),
                 null);
+    }
+
+    /** 派生一份带思考链回调的参数（其余字段原样）。 */
+    public LlmOptions withReasoning(Consumer<String> callback) {
+        return new LlmOptions(model, temperature, topP, maxTokens, timeoutSeconds, thinking, callback);
     }
 
     /** 思考模式是否下发为 {@code enabled}；{@code null} 视作关闭。 */

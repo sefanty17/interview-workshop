@@ -69,9 +69,10 @@ public class LlmClient {
     /**
      * 同上，但生成参数由调用方显式给出（{@code ChatService} 每轮从 {@code ConfigService} 读一次）。
      *
-     * @param options 模型名 / 温度 / top_p / max_tokens / 超时
+     * @param options 模型名 / 温度 / top_p / max_tokens / 超时；{@code onReasoning} 非空时同时回调思考链
      */
     public void stream(List<LlmMessage> messages, LlmOptions options, Consumer<String> onDelta) {
+        Consumer<String> onReasoning = options.onReasoning();
         HttpRequest request = buildRequest(messages, options, true);
         HttpResponse<Stream<String>> response;
         try {
@@ -102,6 +103,12 @@ public class LlmClient {
                 }
                 if (DONE.equals(payload)) {
                     break;
+                }
+                if (onReasoning != null) {
+                    String reasoning = extractField(payload, "reasoning_content");
+                    if (!reasoning.isEmpty()) {
+                        onReasoning.accept(reasoning);
+                    }
                 }
                 String delta = extractDelta(payload);
                 if (!delta.isEmpty()) {
@@ -202,6 +209,17 @@ public class LlmClient {
 
     /** 取 {@code choices[0].delta.content}；没有内容（首帧 role、尾帧 finish_reason）返回空串。 */
     private String extractDelta(String payload) {
+        return extractField(payload, "content");
+    }
+
+    /**
+     * 取 {@code choices[0].delta.<field>}。
+     *
+     * <p>思考链字段名是 {@code reasoning_content}（DeepSeek 系 / OpenAI 兼容实现通用），
+     * 对齐 {@code LlmChunk::Reasoning}（{@code llm/mod.rs:101-103}：思考链仅用于展示与统计，
+     * 不加入正式回复）。
+     */
+    private String extractField(String payload, String field) {
         JsonNode node;
         try {
             node = objectMapper.readTree(payload);
@@ -209,8 +227,8 @@ public class LlmClient {
             log.warn("[LlmClient] 跳过无法解析的 SSE 行：{}", payload);
             return "";
         }
-        JsonNode content = node.path("choices").path(0).path("delta").path("content");
-        return content.isTextual() ? content.asText() : "";
+        JsonNode value = node.path("choices").path(0).path("delta").path(field);
+        return value.isTextual() ? value.asText() : "";
     }
 
     /** LLM 调用异常；{@code timeout} 决定上层 {@code errorCode} 是 LLM_TIMEOUT 还是 LLM_ERROR。 */

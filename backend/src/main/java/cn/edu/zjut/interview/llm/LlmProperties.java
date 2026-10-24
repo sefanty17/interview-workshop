@@ -14,7 +14,7 @@ public class LlmProperties {
 
     private String baseUrl = "https://api.deepseek.com";
     private String apiKey = "";
-    private String model = "deepseek-chat";
+    private String model = "deepseek-reasoner";
     private double temperature = 1.0;
     private int maxTokens = 800;
     private int timeoutSeconds = 60;

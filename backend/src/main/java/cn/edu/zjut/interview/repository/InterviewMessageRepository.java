@@ -30,4 +30,12 @@ public interface InterviewMessageRepository extends JpaRepository<InterviewMessa
 
     /** 最近 20 条台词，倒序取回来再翻正：ai_judged 的【对话记录】用。 */
     List<InterviewMessage> findTop20BySessionIdOrderBySeqDesc(Long sessionId);
+
+    /**
+     * 某个玩家身份被多少条台词引用（删身份前的引用检查）。
+     *
+     * <p>对齐原版 {@code find_saves_using_identity}：有引用就不许删。
+     * 只查 {@code interview_message} —— {@code interview_session} 没有 identity_id 列。
+     */
+    long countByIdentityId(String identityId);
 }

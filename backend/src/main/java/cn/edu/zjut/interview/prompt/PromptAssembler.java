@@ -3,6 +3,10 @@ package cn.edu.zjut.interview.prompt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
 import static cn.edu.zjut.interview.prompt.PromptConstants.DEFAULT_EXAMPLE_CN;
 import static cn.edu.zjut.interview.prompt.PromptConstants.DIALOG_FORMAT_PROMPT_2_BODY;
 import static cn.edu.zjut.interview.prompt.PromptConstants.DIALOG_FORMAT_PROMPT_CN;
@@ -107,6 +111,16 @@ public final class PromptAssembler {
         String prompt = aiPrompt == null ? "" : aiPrompt;
         String identity = identityBlock == null ? "" : identityBlock;
 
+        // 对齐 prompt.rs:244 sys_prompt_builder_with_player：无条件剥离「以下是我的设定」段。
+        // 原版取到 segment 后丢弃（不回填身份块），身份由身份卡承担 —— 这里保持一致，
+        // 但把 segment 记 debug 日志便于排查（原版没有日志，属实现差异）。
+        ExtractResult extracted = extractPlayerSetting(prompt);
+        prompt = extracted.stripped();
+        if (extracted.segment() != null) {
+            log.debug("[PromptAssembler] 已剥离「以下是我的设定」段（{} 字）：{}",
+                    extracted.segment().length(), extracted.segment());
+        }
+
         // ---- 两个硬性短路（顺序与 Rust 一致：先日语翻译，再对话格式提示）----
         // 原版这两个分支返回的是 ai_prompt_with_player（身份块并入人设），不是裸人设
         if (prompt.contains("日语翻译")) {
@@ -150,6 +164,39 @@ public final class PromptAssembler {
     /** 不带面试编排段的版本（纯 LingChat 行为，用于对照测试）。 */
     public static String build(String aiPrompt, String userName, String characterName, String exampleDialogue) {
         return build(aiPrompt, userName, characterName, exampleDialogue, null);
+    }
+
+    /** 抽出人设里「以下是我的设定…」段并剥离。对齐 prompt.rs:208 extract_player_setting。 */
+    public static ExtractResult extractPlayerSetting(String aiPrompt) {
+        if (aiPrompt == null) {
+            return new ExtractResult("", null);
+        }
+        String[] lines = aiPrompt.split("\n", -1);
+        int start = -1;
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].startsWith("以下是我的设定")) {
+                start = i;
+                break;
+            }
+        }
+        if (start < 0) {
+            return new ExtractResult(aiPrompt, null);
+        }
+        int end = lines.length;
+        for (int i = start + 1; i < lines.length; i++) {
+            if (lines[i].startsWith("以下是")) {
+                end = i;
+                break;
+            }
+        }
+        String segment = String.join("\n", Arrays.copyOfRange(lines, start, end));
+        List<String> kept = new ArrayList<>(Arrays.asList(lines).subList(0, start));
+        kept.addAll(Arrays.asList(lines).subList(end, lines.length));
+        return new ExtractResult(String.join("\n", kept), segment);
+    }
+
+    /** {@link #extractPlayerSetting} 的结果：剥离后的人设 + 抽出的段（没有则为 {@code null}）。 */
+    public record ExtractResult(String stripped, String segment) {
     }
 
     /**
