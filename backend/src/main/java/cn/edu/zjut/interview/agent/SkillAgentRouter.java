@@ -86,6 +86,24 @@ public class SkillAgentRouter {
             return label;
         }
 
+        /**
+         * 这件事该谁去做（1:1 迁移 {@code role.rs::TaskKind::role}）。
+         *
+         * <p><b>CHAT 返回 {@code null}</b>：闲聊不涉及剧本，原版就是 {@code TaskKind::Chat => None}。
+         * 以前这里把 CHAT 也塞给素材官，模型于是拿到了 {@code write_file} 和一本创作手册 ——
+         * 用户只是问一句「你能干什么」，它就去改文件。工具白名单同样从这一步派生（{@link #tools()}），
+         * 所以这一处判错会同时错在两个地方。
+         */
+        public Role role() {
+            return switch (this) {
+                case CHAT -> null;
+                case COLLECT, SUMMARIZE, OUTLINE, REVISE_OUTLINE, DRAFT_CHAPTER -> Role.WRITER;
+                case WRITE_CHAPTER, REVISE_CHAPTER -> Role.TRANSFORMER;
+                case CHECK_ASSETS -> Role.DEMANDER;
+                case POLISH -> Role.OPTIMIZER;
+            };
+        }
+
         /** 按 key 解析；认不出返回 null（原版 {@code TaskKind::parse}，任一处不合法就整体作废）。 */
         public static TaskKind parse(String key) {
             for (TaskKind kind : values()) {
@@ -116,12 +134,7 @@ public class SkillAgentRouter {
      * 不推翻原有 {@code TaskKind}，只多一次查表，已有路由逻辑不动。
      */
     public static Role roleFor(TaskKind kind) {
-        return switch (kind) {
-            case CHAT, SUMMARIZE, COLLECT, CHECK_ASSETS -> Role.DEMANDER;
-            case OUTLINE, REVISE_OUTLINE, DRAFT_CHAPTER -> Role.WRITER;
-            case WRITE_CHAPTER, REVISE_CHAPTER -> Role.TRANSFORMER;
-            case POLISH -> Role.OPTIMIZER;
-        };
+        return kind.role();
     }
 
     /**
@@ -131,8 +144,44 @@ public class SkillAgentRouter {
      * 在写剧本时跑去查别的角色手册，两套规范在同一个请求里打架。
      */
     public static List<String> toolsFor(TaskKind kind) {
-        return roleFor(kind).tools();
+        Role role = roleFor(kind);
+        // 没有角色（闲聊）：不给任何工具（对齐 role.rs::tools = &[]）
+        return role == null ? List.of() : role.tools();
     }
+
+    /**
+     * 该项在当前承接判断下真正下发的工具（1:1 迁移 {@code core.rs:437-448 item_tools}）。
+     *
+     * <p>三档 + 一档兜底，顺序不能换：
+     * <ol>
+     *   <li>{@code EXPLAIN}（本项做不了）→ 只读两项（原版 {@code CHAT_TOOLS}），
+     *       让"说清楚、不动文件"成为本轮唯一可能的动作；</li>
+     *   <li>产出能跑章节（{@code WRITE_CHAPTER} / {@code REVISE_CHAPTER}）→ 角色全套（含 delete_file / validate_script）；</li>
+     *   <li>只写 {@code .agent/} 稿子（编剧那几项）→ 写工具，不给 validate_script / delete_file；</li>
+     *   <li>其余（只读体检 / 素材盘点 / 闲聊）→ 只读 + validate_script。</li>
+     * </ol>
+     */
+    public static List<String> toolsFor(TaskKind kind, ScriptFacts.Handoff handoff) {
+        if (handoff != null && handoff.kind() == ScriptFacts.Handoff.Kind.EXPLAIN) {
+            return CHAT_TOOLS;
+        }
+        if (kind.producesRunnableChapters()) {
+            return toolsFor(kind);
+        }
+        if (kind.draftsIntoAgentDir()) {
+            return DRAFT_TOOLS;
+        }
+        return DICTATE_TOOLS;
+    }
+
+    /** 只读两项（对齐 {@code role::CHAT_TOOLS}）。 */
+    private static final List<String> CHAT_TOOLS = List.of("list_files", "read_file");
+
+    /** 只读 + 校验（对齐 {@code role::DICTATE_TOOLS}）。 */
+    private static final List<String> DICTATE_TOOLS = List.of("list_files", "read_file", "validate_script");
+
+    /** 只写 {@code .agent/} 稿子（对齐 {@code role::DRAFT_TOOLS}）。 */
+    private static final List<String> DRAFT_TOOLS = List.of("list_files", "read_file", "write_file", "edit_file");
 
     // ───────────────────────── 计划 ─────────────────────────
 

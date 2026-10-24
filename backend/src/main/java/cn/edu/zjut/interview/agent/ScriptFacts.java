@@ -258,6 +258,11 @@ public record ScriptFacts(
         return parsePlan(readOrEmpty(scriptDir.resolve(DESIGN_REL_PATH)));
     }
 
+    /** 设计稿正文 → 章节 code 列表（与 {@link #planChapters} 同一套解析，只是文本已读好）。 */
+    public static List<String> planChaptersOf(String design) {
+        return parsePlan(design);
+    }
+
     /** 章节号归一后相等（{@code 03} 与 {@code 3} 算同一章）。 */
     private static boolean containsChapter(List<String> ids, String wanted) {
         return ids.stream().anyMatch(id -> sameChapter(id, wanted));

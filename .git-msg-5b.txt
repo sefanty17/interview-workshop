@@ -1,0 +1,17 @@
+批次5-b: 编辑器AI链路 P1-4/P1-5（段序对齐原版 history.rs/prompt.rs）
+
+- ScriptBlock.build：core_build_script_block.md 模板 + 「【当前剧本上下文】」两支，1:1 history.rs:10-36
+- StagePrompt：buildTaskBlock / handoffDigest / deferredQuestion / buildRunMaterials / renderTextOf
+  逐段照 prompt.rs（五段 stage_build_task_block*.md + action_vocab + directive + boundary + 手册段）
+- ScriptModes：script_modes.rs 全文（.agent/constraints.md 的素材/角色卡模式、14 条值表、矛盾提示）
+- StageFacts：StageSnapshot 等价物（design / plan / written / next / last_written）
+- runChatTurn 段序改为：system(base + script_block + task_block) → 历史 → [digest] → [run_materials] → core_run_chat
+- 删掉自造的 buildTaskBlock / renderFacts / renderReceiptNote 三个私有方法
+
+顺带修掉两处跨端契约错误（都是真 bug）：
+- StageQueue.Mark：写 JSON 用 name()（DONE）却按 "Done" 解析 → 账本永远读回空，队列打勾/归档全线失效。
+  改为 json()/parse 对称（Open/Done/Existing/Dropped），写文件也用同一套
+- TaskKind.role()：原先 CHAT 被塞给素材官（原版是 None）→ 闲聊也拿到写工具和创作手册。
+  改为 CHAT→null，并新增 toolsFor(kind, handoff) 1:1 迁移 core.rs:437-448 item_tools 四档
+
+验收自跑：scripts/mvn.sh test → 382 tests, 0 failures, 0 errors

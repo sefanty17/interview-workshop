@@ -89,17 +89,28 @@ final class StageQueue {
             return mark;
         }
 
-        /** JSON 里的值：与原版 serde 的变体名单一致（{@code "Open"} 等，不是小写）。 */
+        /**
+         * JSON 里的值：与原版 serde 的变体名单一致 —— {@code "Open"} / {@code "Done"} /
+         * {@code "Existing"} / {@code "Dropped"}（首字母大写，不是枚举名的大写形态）。
+         * 原版 serde 反序列化枚举变体名就是 Rust 侧的 {@code Open} 等，写文件也用这一套；
+         * 用 {@code name()} 只会永远返回 null，账本一读就整份作废。
+         */
         static Mark parse(String raw) {
             if (raw == null) {
                 return null;
             }
             for (Mark m : values()) {
-                if (m.name().equals(raw)) {
+                if (m.json().equals(raw)) {
                     return m;
                 }
             }
             return null;
+        }
+
+        /** 写进 JSON 的名字（与 {@link #parse} 对称）。 */
+        String json() {
+            String n = name();
+            return n.charAt(0) + n.substring(1).toLowerCase(java.util.Locale.ROOT);
         }
     }
 
@@ -205,6 +216,35 @@ final class StageQueue {
     }
 
     /**
+     * 账本里的全部项（本轮的 + 上一轮留下的），按文件里的顺序。文件不在 / 读不动 → 空表。
+     *
+     * <p>{@code prompt.rs::handoff_digest} 按 {@code (kind, target)} 在这里面查一项的状态，
+     * 所以与 {@code stillOwed} / {@code readQueueProgress} 共用同一份 {@code readState}。
+     */
+    static List<Entry> readEntries(Path dir) {
+        if (dir == null) {
+            return new ArrayList<>();
+        }
+        return readState(dir, QUEUE_JSON_REL_PATH, new ObjectMapper());
+    }
+
+    /**
+     * 这一项在账本上的状态，翻成一句注入给模型的进度话术（逐字照抄 {@code evidence.rs:119-126}）；
+     * 不写"完成 / 未完成"，勾只代表产物本轮被改过。
+     */
+    static String markPhrase(Mark mark) {
+        if (mark == null) {
+            return "";
+        }
+        return switch (mark) {
+            case DONE -> "本轮做出来了（这个产物本轮被改过）";
+            case EXISTING -> "盘上本来就有、这一轮没动它";
+            case OPEN -> "还没核对到产物（可能没做成；这一项若本来就是删除类，那是正常的）";
+            case DROPPED -> "上一轮没做完就放下的（本轮不重做）";
+        };
+    }
+
+    /**
      * 这一项在账本上还欠着吗：登记了且仍是 {@code OPEN}。
      * 不在账本里的（不产出可核对产物、或已经了结）返回 {@code false}（对齐 {@code queue.rs::still_owed}）。
      */
@@ -276,9 +316,11 @@ final class StageQueue {
         try {
             root = mapper.readTree(Files.readString(file, StandardCharsets.UTF_8));
         } catch (IOException | RuntimeException e) {
+            log.warn("[router] 账本解析失败 {}：{}", file, e.toString());
             return out;
         }
         if (root == null || !root.isArray()) {
+            log.warn("[router] 账本不是数组 {}：{}", file, root);
             return out;
         }
         for (JsonNode node : root) {
@@ -305,7 +347,7 @@ final class StageQueue {
         ArrayNode array = mapper.createArrayNode();
         for (Entry e : entries) {
             ObjectNode node = array.addObject();
-            node.put("mark", e.mark().name());
+            node.put("mark", e.mark().json());
             node.put("kind", e.kind().key());
             node.put("target", e.target());
             node.put("registeredAt", e.registeredAt());

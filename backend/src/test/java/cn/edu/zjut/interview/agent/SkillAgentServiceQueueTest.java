@@ -128,10 +128,19 @@ class SkillAgentServiceQueueTest {
             assertTrue(last.content.startsWith(MARKER), "最后一条 user 就是本项的 core_run_chat，实际：" + last.content);
             assertTrue(last.content.contains("interview_chapter 表里 code=<id> 的那一行"),
                     "原版路径 Chapters/<id>.yaml 已换成本项目落点：" + last.content);
-            // 倒数第二条是脚本上下文（任务书），不是 core_run_chat
-            SkillAgentLlmClient.Msg before = msgs.get(msgs.size() - 2);
-            assertEquals("user", before.role);
-            assertTrue(before.content.contains("【本轮任务】"), "任务书仍然保留，排在 core_run_chat 之前");
+            // 倒数第二条不再固定是任务书：原版段序是
+            //   system(base+script_block+task_block) → 历史 → [handoff_digest] → [run_materials] → core_run_chat
+            // 后两段空不注入，所以这里只要求"核心任务书仍在 user 段里、且在 core_run_chat 之前"
+            // （它现在在 system 里，紧跟在 base 之后：对齐 prompt.rs:124）
+            assertTrue(msgs.get(0).content.contains("【本轮任务】"), "任务书在 system 尾部：" + msgs.get(0).content.length());
+            boolean taskBefore = false;
+            for (int k = 0; k < msgs.size() - 1; k++) {
+                String c = msgs.get(k).content;
+                if (c != null && c.contains("【本轮任务】")) {
+                    taskBefore = true;
+                }
+            }
+            assertTrue(taskBefore, "任务书必须排在 core_run_chat 之前");
         }
         String firstOwn = requests.get(1).get(requests.get(1).size() - 1).content;
         String secondOwn = requests.get(3).get(requests.get(3).size() - 1).content;
