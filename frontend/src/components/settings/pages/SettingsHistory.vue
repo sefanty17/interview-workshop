@@ -37,8 +37,15 @@
                     <span class="text-[17px] font-semibold text-[#79d9ff]">
                       {{ item.displayName }}
                     </span>
-                    <!-- TODO(批次8)：回溯按钮，对齐上游 handleBacktrack / rollback_conversation。
-                         数据位已就绪（userMessageSeq），等后端截断接口与会话级生成锁做完再挂上。 -->
+                    <button
+                      v-if="item.userMessageSeq !== undefined"
+                      class="shrink-0 cursor-pointer rounded border border-white/10 bg-transparent px-2 py-0.5 text-xs text-white/40 transition-all duration-200 hover:border-red-400/50 hover:bg-red-500/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                      title="删除这条消息之后的全部对话，回到这里重来"
+                      :disabled="rollingBack"
+                      @click.stop="handleBacktrack(item.userMessageSeq!)"
+                    >
+                      回溯
+                    </button>
                   </div>
                   <div v-if="item.thinking" class="mb-1">
                     <button
@@ -109,7 +116,12 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { History } from "@lucide/vue";
 import { MenuItem, MenuPage } from "../../ui";
-import { fetchMessages, fetchSessions, type SessionMessage } from "../../../api/chat";
+import {
+  fetchMessages,
+  fetchSessions,
+  rollbackConversation,
+  type SessionMessage,
+} from "../../../api/chat";
 import { groupLines, PAGE_SIZE, type HistoryBlock } from "./history/historyFlow";
 
 /**
@@ -134,7 +146,10 @@ let suppressAutoScroll = false;
 
 const loading = ref(true);
 const loadError = ref(false);
+const rollingBack = ref(false);
 const dialogHistory = ref<SessionMessage[]>([]);
+/** 历史页自己拿不到会话 id（它只活在 InterviewRoomView 的局部 ref），加载时记住它 */
+const sessionId = ref<number | null>(null);
 
 /** 当前页码 */
 const currentPage = ref(1);
@@ -185,6 +200,7 @@ async function load(): Promise<void> {
     }
     // 会话 id 只活在 InterviewRoomView 的局部 ref 里，历史页拿不到 → 取 id 最大的那场
     const latest = sessions.reduce((max, s) => (s.id > max.id ? s : max), sessions[0]);
+    sessionId.value = latest.id;
     dialogHistory.value = await fetchMessages(latest.id);
   } catch (e) {
     console.error("加载对话历史失败:", e);
@@ -192,6 +208,27 @@ async function load(): Promise<void> {
     dialogHistory.value = [];
   } finally {
     loading.value = false;
+  }
+}
+
+/**
+ * 回溯（对齐上游 `handleBacktrack`）：删掉第 N 条用户消息及其之后的全部台词。
+ *
+ * <p>后端内部已经等过生成锁（`rollback_conversation` 的 `gen_lock`），
+ * 不会有本轮迟到的流式事件再插进来，所以这里直接用返回值重建整条历史即可。
+ */
+async function handleBacktrack(messageSeq: number): Promise<void> {
+  if (sessionId.value === null) return;
+  if (!window.confirm("确定要回到这里重新开始吗？这之后的对话会被删除。")) return;
+  rollingBack.value = true;
+  try {
+    dialogHistory.value = await rollbackConversation(sessionId.value, messageSeq);
+    currentPage.value = totalPages.value;
+  } catch (e) {
+    console.error("回溯失败:", e);
+    window.alert("回溯失败：" + (e instanceof Error ? e.message : String(e)));
+  } finally {
+    rollingBack.value = false;
   }
 }
 

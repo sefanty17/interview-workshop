@@ -76,7 +76,12 @@ public class SessionController {
     @GetMapping("/{id}/messages")
     public List<SessionMessageView> messages(@PathVariable Long id,
                                              @RequestParam(defaultValue = "0") int afterSeq) {
-        List<SessionMessageView> views = new ArrayList<>(chatService.listMessages(id, afterSeq));
+        return withUserMessageSeq(chatService.listMessages(id, afterSeq));
+    }
+
+    /** 给 {@code role=user} 的行按 seq 升序编号 {@code userMessageSeq}（1-based）。 */
+    private List<SessionMessageView> withUserMessageSeq(List<SessionMessageView> source) {
+        List<SessionMessageView> views = new ArrayList<>(source);
         int userSeq = 0;
         for (int i = 0; i < views.size(); i++) {
             SessionMessageView view = views.get(i);
@@ -86,6 +91,18 @@ public class SessionController {
             }
         }
         return views;
+    }
+
+    /**
+     * 回溯对话：删掉第 {@code seq} 条用户消息及其之后的全部台词，返回剩余台词。
+     *
+     * <p>对齐 {@code api/chat.rs:502 rollback_conversation}。{@code userMessageSeq} 的
+     * 重新编号走 {@link #messages} 的同一套逻辑 —— 截断后序号必须从 1 连续重排，
+     * 否则下一次回溯会定位到错误的那条。
+     */
+    @PostMapping("/{id}/rollback")
+    public List<SessionMessageView> rollback(@PathVariable Long id, @RequestParam int seq) {
+        return withUserMessageSeq(chatService.rollback(id, seq));
     }
 
     /** 推进剧本到下一个阻塞点（input / free_dialogue / 结束）。 */

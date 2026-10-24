@@ -42,6 +42,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -55,7 +56,9 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * 对话链路服务：建会话 + 流式对话（规格 B3-BE §一 / §二）。
@@ -109,6 +112,19 @@ public class ChatService {
     /** 已验收的拼装/分句组件，直接复用，不复制逻辑。 */
     private final MemoryBuilder memoryBuilder = new MemoryBuilder();
     private final SymbolParser symbolParser = new SymbolParser();
+
+    /**
+     * 会话级生成锁（对齐原版 {@code AppState.generation_lock}）。
+     *
+     * <p>回溯（{@link #rollback}）必须先拿到它才动手：否则正在跑的那一轮会在截断之后
+     * 继续往库里写，界面上就冒出一句「不该存在的回复」。原版 {@code rollback_conversation}
+     * 开头就是 {@code gen_lock.lock().await}，语义完全一样。
+     */
+    private final Map<Long, ReentrantLock> generationLocks = new ConcurrentHashMap<>();
+
+    private ReentrantLock generationLock(Long sessionId) {
+        return generationLocks.computeIfAbsent(sessionId, id -> new ReentrantLock());
+    }
 
     /** SSE 输出是阻塞写，每个请求占一个线程；4 个并发的个人项目够用。 */
     private final ExecutorService executor = Executors.newFixedThreadPool(4, new java.util.concurrent.ThreadFactory() {
@@ -273,6 +289,10 @@ public class ChatService {
      * 改造前逐字一致（验收见 {@code ChatGodAgentLoopTest}）。
      */
     private void runTurn(InterviewSession session, Interviewer interviewer, String text, SseEmitter emitter) {
+        // 整轮生成持锁（对齐原版 run_chat 对 generation_lock 的持有范围）：
+        // 回溯要等这一轮写完才能截断，否则会冒出「不该存在的回复」。
+        ReentrantLock lock = generationLock(session.getId());
+        lock.lock();
         try {
             // 2. 首条 system 缺失 → 现场补一条（防老数据）
             ensureSystemMessage(session, interviewer);
@@ -406,6 +426,8 @@ public class ChatService {
             send(emitter, "ai:error", error);
             send(emitter, "status:reset", Map.of());
             emitter.complete();
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -495,6 +517,72 @@ public class ChatService {
             emitter.complete();
         }
     }
+
+    /**
+     * 回溯对话：删掉第 {@code messageSeq} 条用户消息<b>及其之后</b>的全部台词。
+     *
+     * <p>对齐 {@code api/chat.rs:502 rollback_conversation}：
+     * <ol>
+     *   <li>先拿 {@code generation_lock}（原版 {@code gen_lock.lock().await}）——
+     *       等正在跑的那一轮写完，否则截断后还会被补写回来；</li>
+     *   <li>按 1-based 序号数到第 N 条 {@code role=user} 的行，记下它的 {@code seq}；</li>
+     *   <li>删 {@code seq >= 该 seq} 的所有行（原版 {@code truncate(idx)} 含锚点本身，
+     *       玩家才能把这句话重说一遍）；</li>
+     *   <li>返回截断后的剩余台词（原版返回重建的 {@code GameLineInit}，这里直接给视图）。</li>
+     * </ol>
+     *
+     * @return 截断后剩下的台词（含重新编号的 {@code userMessageSeq} 由控制器补）
+     */
+    @Transactional
+    public List<SessionMessageView> rollback(Long sessionId, int messageSeq) {
+        if (messageSeq < 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "回溯序号必须 >= 1，收到 " + messageSeq);
+        }
+        if (!sessionRepository.existsById(sessionId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在：" + sessionId);
+        }
+        ReentrantLock lock = generationLock(sessionId);
+        boolean acquired;
+        try {
+            acquired = lock.tryLock(GENERATION_LOCK_WAIT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "等待生成结束被中断");
+        }
+        if (!acquired) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "上一轮还在生成中，请稍后重试");
+        }
+        try {
+            List<InterviewMessage> all = messageRepository.findBySessionIdOrderBySeqAsc(sessionId);
+            int count = 0;
+            Integer cutSeq = null;
+            for (InterviewMessage message : all) {
+                if (InterviewMessage.ROLE_USER.equals(message.getRole())) {
+                    count += 1;
+                    if (count == messageSeq) {
+                        cutSeq = message.getSeq();
+                        break;
+                    }
+                }
+            }
+            if (cutSeq == null) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "未找到序号为 " + messageSeq + " 的用户消息（本场共 " + count + " 条）");
+            }
+            int removed = messageRepository.deleteFromSeq(sessionId, cutSeq);
+            log.info("[ChatService] 回溯 session={} 第 {} 条用户消息，删除 {} 条台词（从 seq={} 起）",
+                    sessionId, messageSeq, removed, cutSeq);
+            return messageRepository.findBySessionIdOrderBySeqAsc(sessionId).stream()
+                    .map(SessionMessageView::of)
+                    .toList();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** 回溯等生成锁的最长时间（秒）。原版是无期等待，HTTP 请求不能这么干，给个上限。 */
+    private static final int GENERATION_LOCK_WAIT_SECONDS = 30;
 
     // ───────────────────────── 上帝 Agent：选下一个说话的人 ─────────────────────────
 

@@ -302,6 +302,25 @@ export async function fetchSessions(status?: string): Promise<SessionSummary[]> 
   return (await response.json()) as SessionSummary[];
 }
 
+/**
+ * 回溯对话：删掉第 `seq` 条用户消息及其之后的全部台词，返回剩余台词。
+ *
+ * 对齐上游 `rollback_conversation`（`api/chat.rs:502`）：截断含锚点那条用户消息本身，
+ * 玩家才能把这句话重说一遍。后端会等生成锁，正在生成时回 409。
+ */
+export async function rollbackConversation(
+  sessionId: number,
+  seq: number,
+): Promise<SessionMessage[]> {
+  const response = await fetch(`/api/sessions/${sessionId}/rollback?seq=${seq}`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(`rollbackConversation 失败：HTTP ${response.status}`);
+  }
+  return (await response.json()) as SessionMessage[];
+}
+
 /** 解析一个 SSE 块：`event: xxx\ndata: {...}`。 */
 function parseEvent(raw: string): StreamEvent | null {
   let event = "message";

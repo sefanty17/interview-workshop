@@ -30,6 +30,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doAnswer;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -180,6 +181,53 @@ class SessionMessagesViewTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[?(@.role=='assistant')].displayName")
                         .value(org.hamcrest.Matchers.hasItem(expectedName)));
+    }
+
+    /**
+     * 回溯（对齐 {@code api/chat.rs:502 rollback_conversation}）。
+     *
+     * <p>三个判据：① 锚点那条用户消息自己也要删掉（玩家才能重说一遍）；
+     * ② 之后的所有行一起删；③ 截断后 {@code userMessageSeq} 从 1 重新连续编号。
+     */
+    @Test
+    void 回溯删掉锚点用户消息及其之后并重新编号() throws Exception {
+        CreateSessionResponse created =
+                chatService.createSession(new CreateSessionRequest("strict", "java", null));
+        Long sessionId = created.sessionId();
+
+        save(sessionId, 1, InterviewMessage.ROLE_USER, "第一轮提问", null, "小桉", 0);
+        save(sessionId, 2, InterviewMessage.ROLE_ASSISTANT, "第一轮回答", null, "风雪", 4);
+        save(sessionId, 3, InterviewMessage.ROLE_USER, "第二轮提问", null, "小桉", 0);
+        save(sessionId, 4, InterviewMessage.ROLE_ASSISTANT, "第二轮回答", null, "风雪", 4);
+        save(sessionId, 5, InterviewMessage.ROLE_USER, "第三轮提问", null, "小桉", 0);
+        save(sessionId, 6, InterviewMessage.ROLE_ASSISTANT, "第三轮回答", null, "风雪", 4);
+
+        mockMvc.perform(post("/api/sessions/" + sessionId + "/rollback?seq=2"))
+                .andExpect(status().isOk())
+                // 建会话时会先落一条 system（seq=0），它不该被回溯删掉；
+                // 剩 system(0) + user(1) + assistant(2)（锚点「第二轮提问」及其之后全删）
+                .andExpect(jsonPath("$.length()").value(3))
+                .andExpect(jsonPath("$[0].role").value("system"))
+                .andExpect(jsonPath("$[1].content").value("第一轮提问"))
+                .andExpect(jsonPath("$[1].userMessageSeq").value(1))
+                .andExpect(jsonPath("$[2].content").value("第一轮回答"));
+
+        // 再回溯到第 1 条 → 只剩那条 system，台词清空
+        mockMvc.perform(post("/api/sessions/" + sessionId + "/rollback?seq=1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].role").value("system"));
+    }
+
+    /** 序号越界：原版报「未找到序号为 N 的用户消息」，本项目按 REST 习惯回 404。 */
+    @Test
+    void 回溯序号不存在返回404() throws Exception {
+        CreateSessionResponse created =
+                chatService.createSession(new CreateSessionRequest("strict", "java", null));
+        mockMvc.perform(post("/api/sessions/" + created.sessionId() + "/rollback?seq=99"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/sessions/" + created.sessionId() + "/rollback?seq=0"))
+                .andExpect(status().isBadRequest());
     }
 
     private void save(Long sessionId, int seq, String role, String content,

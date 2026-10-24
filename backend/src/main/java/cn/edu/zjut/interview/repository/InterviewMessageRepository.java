@@ -28,6 +28,16 @@ public interface InterviewMessageRepository extends JpaRepository<InterviewMessa
     /** 台词条数（剧本引擎的 progress 锚点要报 line_count）。 */
     long countBySessionId(Long sessionId);
 
+    /**
+     * 回溯用：删掉 {@code seq >= fromSeq} 的所有台词（含锚点那条用户消息本身）。
+     *
+     * <p>对齐 {@code rollback_conversation} 的 {@code line_list.truncate(idx)}：
+     * 截断到第 N 条用户消息<b>之前</b>，那条用户消息也一并删掉，玩家才能重说一遍。
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("delete from InterviewMessage m where m.sessionId = :sessionId and m.seq >= :fromSeq")
+    int deleteFromSeq(@Param("sessionId") Long sessionId, @Param("fromSeq") Integer fromSeq);
+
     /** 最近 20 条台词，倒序取回来再翻正：ai_judged 的【对话记录】用。 */
     List<InterviewMessage> findTop20BySessionIdOrderBySeqDesc(Long sessionId);
 
