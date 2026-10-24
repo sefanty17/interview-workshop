@@ -727,7 +727,7 @@ public class SkillAgentService {
                     : null;
             SkillAgentLlmClient.Completion last = runItemTools(conversationId, emitter, messages, tools,
                     itemRun, new SkillAgentTools.ItemScope(kind.producesRunnableChapters(), kind),
-                    allowed, maxRounds, usageAccumulator);
+                    kind, allowed, maxRounds, usageAccumulator);
             // 被取消且一轮都没跑：这一项没有正文（不能把上一项的文本当成本项的）
             if (last != null && last.text() != null) {
                 reply.append(last.text());
@@ -749,7 +749,7 @@ public class SkillAgentService {
                     messages.add(SkillAgentLlmClient.Msg.user(coreCheckText(kind, target)));
                     SkillAgentLlmClient.Completion second = runItemTools(conversationId, emitter, messages, tools,
                             itemRun, new SkillAgentTools.ItemScope(kind.producesRunnableChapters(), kind),
-                            allowed, maxRounds, usageAccumulator);
+                            kind, allowed, maxRounds, usageAccumulator);
                     if (second != null && second.text() != null) {
                         reply.append(second.text());
                     }
@@ -797,6 +797,7 @@ public class SkillAgentService {
                                                         SkillAgentTools tools,
                                                         SkillAgentTools.RunContext runContext,
                                                         SkillAgentTools.ItemScope itemScope,
+                                                        SkillAgentRouter.TaskKind kind,
                                                         List<String> allowed,
                                                         int maxRounds,
                                                         UsageAccumulator usage) throws IOException {
@@ -814,7 +815,7 @@ public class SkillAgentService {
             }
             List<SkillAgentLlmClient.ToolDef> defs = tools.toolDefinitions(allowed);
             completion = llmClient.completeStream(
-                    messages, defs, LlmOptions.from(configs),
+                    messages, defs, itemOptions(kind),
                     content -> sendQuietly(emitter, SkillAgentEvent.messageDelta(content)),
                     content -> sendQuietly(emitter, SkillAgentEvent.reasoning(content)),
                     cancelled);
@@ -885,6 +886,21 @@ public class SkillAgentService {
             }
         }
         return completion;
+    }
+
+    /**
+     * 这一项的生成参数：任务级 thinking 优先，设置项兜底（1:1 迁移 {@code config.rs:101-115}
+     * {@code resolve_skill_agent_provider} 里的 {@code stage_thinking.or(config.enable_thinking)}）。
+     *
+     * <p>原版在这里重新 build 一个 LlmClient；本项目只有单一 provider，所以只把 thinking 覆盖到
+     * {@link LlmOptions} 上，其余五个参数仍走 {@link LlmOptions#from}。
+     */
+    private LlmOptions itemOptions(SkillAgentRouter.TaskKind kind) {
+        LlmOptions base = LlmOptions.from(configs);
+        SkillAgentConfig cfg = SkillAgentConfig.load(configs, userSettings);
+        Boolean stageThinking = kind == null ? null : kind.thinking();
+        return new LlmOptions(base.model(), base.temperature(), base.topP(), base.maxTokens(),
+                base.timeoutSeconds(), stageThinking != null ? stageThinking : cfg.getEnableThinking());
     }
 
     // ============================================================

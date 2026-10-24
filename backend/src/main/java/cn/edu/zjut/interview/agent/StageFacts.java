@@ -75,9 +75,21 @@ public record StageFacts(
         return null;
     }
 
-    /** 已落盘章节里最后写好的那一章（{@code snap.last_written()}，{@code written} 已排序）。 */
+    /**
+     * 已落盘章节里「设计稿顺序上最后一个」那一章（1:1 迁移 {@code stage/mod.rs:98-103}
+     * {@code last_written}：在 {@code plan} 里 rfind 一个也在 {@code written} 里的 id）。
+     *
+     * <p><b>不能取 {@code written} 的最后一个</b>：{@code written} 里可能有设计稿里已经没有的旧章
+     * （设计稿改过、章节残留），那样会取到一个不属于当前计划的「上一章」，
+     * 让【上一章（id）收尾状态】贴错内容。
+     */
     public String lastWritten() {
-        return written.isEmpty() ? null : written.get(written.size() - 1);
+        for (int i = plan.size() - 1; i >= 0; i--) {
+            if (written.contains(plan.get(i))) {
+                return plan.get(i);
+            }
+        }
+        return null;
     }
 
     private static String readOrEmpty(Path path) {

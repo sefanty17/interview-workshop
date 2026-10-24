@@ -123,6 +123,19 @@ public class SkillAgentRouter {
         public boolean draftsIntoAgentDir() {
             return this == OUTLINE || this == REVISE_OUTLINE || this == DRAFT_CHAPTER;
         }
+
+        /**
+         * 这一轮要不要开思考模式，按任务类型给而非按阶段给（1:1 迁移 {@code role.rs:130-148}）。
+         *
+         * <p>原版返回 {@code Option<bool>}，但十个分支全覆盖、永远不会是 {@code None}；
+         * 本项目落成 {@code boolean}，调用方按「有值就覆盖」处理，等价。
+         */
+        public boolean thinking() {
+            return switch (this) {
+                case COLLECT, SUMMARIZE, OUTLINE, REVISE_OUTLINE, DRAFT_CHAPTER -> true;
+                case CHAT, WRITE_CHAPTER, REVISE_CHAPTER, CHECK_ASSETS, POLISH -> false;
+            };
+        }
     }
 
     // ───────────────────────── 工具白名单 ─────────────────────────

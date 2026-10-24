@@ -45,6 +45,9 @@ import java.util.stream.Stream;
  * {@code stream_options.include_usage=true}；逐行读 SSE，累积
  * {@code delta.content}（→ message_delta）、{@code delta.reasoning_content}（→ reasoning）、
  * {@code delta.tool_calls} 分片（按 index 拼接 arguments）。
+ *
+ * <p>思考模式：请求体恒带 {@code thinking: {"type": "enabled"|"disabled"}}，
+ * 取自 {@link LlmOptions#thinkingEnabled()}。
  */
 @Component
 public class SkillAgentLlmClient {
@@ -323,6 +326,17 @@ public class SkillAgentLlmClient {
         return new Completion(text.toString(), reasoning.toString(), fixed, finishReason, usage);
     }
 
+    /**
+     * 把 thinking 字段写进请求体（1:1 迁移 {@code genai_provider.rs:391-418}）。
+     *
+     * <p>无条件注入、不区分 provider：DeepSeek Reasoner 这类模型在字段缺失时默认开思考，
+     * 不注入就关不掉。本项目只有 OpenAI 兼容通道、没有 MiniMax，故不迁 {@code adaptive} 那支映射。
+     * 包内可见，供测试直接调。
+     */
+    static void putThinking(ObjectNode body, LlmOptions options) {
+        body.putObject("thinking").put("type", options.thinkingEnabled() ? "enabled" : "disabled");
+    }
+
     /** 组请求体：与 {@code LlmClient} 同源凭据，多拼 tools / tool_choice / stream_options。 */
     private HttpRequest buildRequest(List<Msg> messages, List<ToolDef> tools, LlmOptions options) {
         ObjectNode body = objectMapper.createObjectNode();
@@ -332,6 +346,7 @@ public class SkillAgentLlmClient {
         body.put("top_p", options.topP());
         body.put("max_tokens", options.maxTokens());
         body.putObject("stream_options").put("include_usage", true);
+        putThinking(body, options);
         ArrayNode array = body.putArray("messages");
         for (Msg message : messages) {
             array.add(message.toJson(objectMapper));
