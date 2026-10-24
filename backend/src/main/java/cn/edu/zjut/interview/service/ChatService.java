@@ -215,7 +215,8 @@ public class ChatService {
         if (script != null) {
             saveMessage(session.getId(), 1, InterviewMessage.ROLE_ASSISTANT, opening,
                     first == null ? null : first.originalTag(), openingEmotion,
-                    first == null ? null : first.motionText(), interviewerRoleId(interviewer));
+                    first == null ? null : first.motionText(), interviewerRoleId(interviewer),
+                    null, interviewer.getName());
         }
 
         log.info("[ChatService] 建会话 id={} interviewer={} job={} systemPromptLength={}",
@@ -621,7 +622,8 @@ public class ChatService {
                     segment.followingText(), segment.originalTag(), segment.predicted(), segment.motionText(),
                     interviewerRoleId(interviewer),
                     // 思考链只挂最终句（generator/mod.rs:698-705）
-                    isFinal ? thinking : null);
+                    isFinal ? thinking : null,
+                    interviewer.getName());
 
             ReplyEvent event = new ReplyEvent(
                     ReplyEvent.TYPE,
@@ -680,7 +682,7 @@ public class ChatService {
                              String originalTag, String predictedEmotion, String action,
                              Integer senderRoleId) {
         saveMessage(sessionId, seq, role, content, originalTag, predictedEmotion, action,
-                senderRoleId, null);
+                senderRoleId, null, null);
     }
 
     /**
@@ -691,6 +693,21 @@ public class ChatService {
     private void saveMessage(Long sessionId, int seq, String role, String content,
                              String originalTag, String predictedEmotion, String action,
                              Integer senderRoleId, String thinking) {
+        saveMessage(sessionId, seq, role, content, originalTag, predictedEmotion, action,
+                senderRoleId, thinking, null);
+    }
+
+    /**
+     * 落一条台词（带思考链 + 说话者显示名）。
+     *
+     * @param thinking 本条回复的思考链，对齐 {@code line.thinking}；非最终句传 {@code null}
+     * @param speakerName 这句话在历史里显示成谁说的（对齐 {@code line.display_name}）。
+     *                    面试官行传角色名，旁白 / system / 玩家行传 {@code null}
+     *                    （玩家的名字由 {@link PlayerIdentityService#currentDisplayName()} 决定）
+     */
+    private void saveMessage(Long sessionId, int seq, String role, String content,
+                             String originalTag, String predictedEmotion, String action,
+                             Integer senderRoleId, String thinking, String speakerName) {
         InterviewMessage message = new InterviewMessage();
         message.setSessionId(sessionId);
         message.setSeq(seq);
@@ -707,6 +724,11 @@ public class ChatService {
         if (senderRoleId != null && senderRoleId == InterviewMessage.PLAYER_ROLE_ID) {
             message.setIdentityId(playerIdentities.currentIdentityId());
             message.setDisplayName(playerIdentities.currentDisplayName());
+        } else if (senderRoleId != null && speakerName != null && !speakerName.isBlank()) {
+            // 面试官行同样要带名字（对齐 line.display_name）：历史对话流按 display_name
+            // 分组，面试官行留空会被当成旁白渲染成斜体、不冠名。
+            // 旁白 / system 行 senderRoleId 为 null，落不到这个分支，保持 NULL。
+            message.setDisplayName(speakerName);
         }
         message.setCreatedAt(LocalDateTime.now());
         messageRepository.save(message);

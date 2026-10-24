@@ -63,7 +63,7 @@ export const emptyPlayerIdentity = (): PlayerIdentity => ({
 // 错误与请求
 // ============================================================
 
-/** 身份接口失败：`code` 是后端 409 时的业务码（`IDENTITY_IN_USE` / `IDENTITY_IS_CURRENT` 等）。 */
+/** 身份接口失败：`code` 是后端 409 时的业务码（目前只有 `IDENTITY_IN_USE`：有面试记录引用）。 */
 export class PlayerIdentityApiError extends Error {
   readonly status?: number;
   readonly code?: string;

@@ -29,9 +29,6 @@ public class PlayerIdentityService {
     /** 没建过任何身份时用的兜底身份 id。 */
     public static final String DEFAULT_IDENTITY_ID = "me";
 
-    /** 当前身份不允许删除（本项目扩展，超出规格；原版没有这一条）。 */
-    public static final String IDENTITY_IS_CURRENT = "IDENTITY_IS_CURRENT";
-
     /** 身份被面试记录引用，不允许删除（对齐 dev「有 N 个存档正在使用这个身份」）。 */
     public static final String IDENTITY_IN_USE = "IDENTITY_IN_USE";
 
@@ -157,15 +154,17 @@ public class PlayerIdentityService {
      * 「有 N 个面试记录正在使用这个身份，无法删除。」。
      *
      * <p>未被引用就硬删 —— 原版是移入 {@code .trash/} 的软删除，H2 没有回收站，
-     * 属实现方式差异。另加护栏：当前身份不允许删（本项目扩展）。
+     * 属实现方式差异。
+     *
+     * <p><b>删当前身份是允许的</b>：原版只挡「有存档引用」，不挡「是当前」。
+     * 删完之后 {@code current()} 自然为空，{@code list()} 会回落到虚拟默认身份 ——
+     * 早期版本这里加了「当前身份不可删」的护栏，结果库里只剩一张卡时永远删不掉
+     * （切不出去也删不掉，死锁），2026-10-25 实测发现后按原版语义撤掉。
      */
     @Transactional
     public void delete(String identityId) {
         PlayerIdentity card = get(identityId).orElseThrow(
                 () -> new IdentityDeleteBlocked("IDENTITY_NOT_FOUND", "身份不存在"));
-        if (Boolean.TRUE.equals(card.getIsCurrent())) {
-            throw new IdentityDeleteBlocked(IDENTITY_IS_CURRENT, "当前身份不可删除，请先切换到别的身份。");
-        }
         long used = messageRepository.countByIdentityId(card.getIdentityId());
         if (used > 0) {
             throw new IdentityDeleteBlocked(IDENTITY_IN_USE,

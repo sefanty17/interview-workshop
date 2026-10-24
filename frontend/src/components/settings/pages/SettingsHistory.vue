@@ -6,7 +6,15 @@
           <History :size="20" />
         </template>
         <div class="flex h-full max-h-[75dvh] min-h-0 flex-col">
-          <div v-if="records.length === 0" class="flex flex-1 items-center justify-center">
+          <div v-if="loading" class="flex flex-1 items-center justify-center">
+            <div class="py-8 text-center text-base text-white/50">加载中...</div>
+          </div>
+
+          <div v-else-if="loadError" class="flex flex-1 items-center justify-center">
+            <div class="py-8 text-center text-base text-white/50">加载失败，请稍后重试</div>
+          </div>
+
+          <div v-else-if="dialogHistory.length === 0" class="flex flex-1 items-center justify-center">
             <div
               class="py-8 text-center text-2xl font-bold text-gray-100 [text-shadow:0_0_5px_rgba(255,255,255,0.5)]"
             >
@@ -14,291 +22,310 @@
             </div>
           </div>
 
-          <div
-            v-else
-            class="scroll-brand scrollbar-thin min-h-0 flex-1 overflow-y-auto scroll-smooth px-1.5 py-3.5"
-          >
-            <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <button
-                v-for="(record, index) in records"
-                :key="record.id"
-                class="group flex flex-col rounded-2xl border border-white/20 bg-white/10 p-4 text-left backdrop-blur shadow-[0_8px_32px_rgba(0,0,0,0.2)] transition-all duration-300 ease-[cubic-bezier(0.25,0.8,0.25,1)] hover:-translate-y-0.75 hover:border-[rgba(121,217,255,0.35)] hover:bg-white/15 hover:shadow-[0_12px_40px_rgba(121,217,255,0.08)]"
-                @click="openDetail(record)"
-              >
-                <div class="flex items-center justify-between font-mono text-xs text-white/40">
-                  <span class="font-bold">No.{{ index + 1 }}</span>
-                  <span class="flex items-center gap-1">
-                    <Clock :size="10" />
-                    {{ formatDate(record.date) }}
-                  </span>
-                </div>
-
-                <div class="mt-1.5 flex items-center gap-2 overflow-hidden">
-                  <span class="truncate text-sm font-bold text-white">{{ recordTitle(record) }}</span>
-                  <span
-                    class="shrink-0 rounded-full border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] text-white/55"
-                  >
-                    {{ record.questions.length }} 题
-                  </span>
-                </div>
-
-                <div class="mt-2 line-clamp-2 text-xs leading-[1.5] text-white/65 italic">
-                  {{ recordSummary(record) }}
-                </div>
-
+          <div v-else class="flex min-h-0 flex-1 flex-col">
+            <div
+              ref="contentRef"
+              class="scroll-brand scrollbar-thin min-h-0 flex-1 overflow-y-auto scroll-smooth px-1.5 py-3.5"
+              style="line-height: 1.9; font-size: 18px"
+            >
+              <template v-for="(item, i) in groupedHistory" :key="i">
                 <div
-                  class="mt-3 flex items-center justify-between border-t border-white/10 pt-2 text-[11px] text-white/40"
+                  class="py-1"
+                  :class="{ 'mt-0 border-t border-white/10 pt-3': !item.isNarration && i > 0 }"
                 >
-                  <span class="truncate">{{ record.personaName }}</span>
-                  <span class="flex shrink-0 items-center gap-1">
-                    身份：求职者
-                    <ChevronRight
-                      :size="12"
-                      class="text-white/30 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-brand"
-                    />
-                  </span>
+                  <div v-if="!item.isNarration" class="mb-1 flex items-center justify-between">
+                    <span class="text-[17px] font-semibold text-[#79d9ff]">
+                      {{ item.displayName }}
+                    </span>
+                    <!-- TODO(批次8)：回溯按钮，对齐上游 handleBacktrack / rollback_conversation。
+                         数据位已就绪（userMessageSeq），等后端截断接口与会话级生成锁做完再挂上。 -->
+                  </div>
+                  <div v-if="item.thinking" class="mb-1">
+                    <button
+                      class="inline-flex cursor-pointer items-center gap-1 rounded-full border border-[rgba(121,217,255,0.25)] bg-[rgba(121,217,255,0.08)] px-2.5 py-0.5 text-xs text-[#a8d8f0]/70 transition-all duration-200 hover:border-[rgba(121,217,255,0.5)] hover:text-[#c9e7ff]"
+                      @click.stop="toggleThinking(i)"
+                    >
+                      <span>{{ isThinkingExpanded(i) ? "▼" : "▶" }}</span>
+                      <span>思考过程 ({{ item.thinking.length }})</span>
+                    </button>
+                    <div
+                      v-if="isThinkingExpanded(i)"
+                      class="scrollbar-thin mt-1.5 max-h-64 overflow-y-auto rounded-2xl border border-[rgba(121,217,255,0.15)] bg-[rgba(121,217,255,0.05)] px-4 py-3 text-[15px] leading-normal whitespace-pre-wrap text-white/55"
+                    >
+                      {{ item.thinking }}
+                    </div>
+                  </div>
+                  <template v-for="(entry, j) in item.lines" :key="j">
+                    <div
+                      v-for="(seg, k) in entry.segments"
+                      :key="k"
+                      class="flex items-start gap-1.5 py-0.5 wrap-break-word whitespace-pre-wrap"
+                      :class="{
+                        'text-[#c8d0dc] italic': seg.type === 'action',
+                        'text-[#b8c0cc] italic': item.isNarration && seg.type !== 'action',
+                        'text-[#e8e8e8]': seg.type !== 'action' && !item.isNarration,
+                      }"
+                      style="font-size: 18px; line-height: 1.9"
+                    >
+                      <span v-if="seg.type === 'action'" class="text-[#c8d0dc]">{{ seg.text }}</span>
+                      <span v-else-if="item.isNarration">{{ seg.text }}</span>
+                      <span v-else>{{ "「" + seg.text + "」" }}</span>
+                    </div>
+                  </template>
                 </div>
+              </template>
+            </div>
+
+            <div
+              v-if="totalPages > 1"
+              class="mt-auto flex w-full shrink-0 items-center justify-between px-3 py-2"
+            >
+              <button
+                class="cursor-pointer rounded-lg border-0 bg-[#e9ecef] px-4 py-1.5 text-sm font-medium text-[#495057] transition-all duration-200 hover:not-disabled:-translate-y-0.5 hover:not-disabled:bg-[rgba(121,217,255,1)] hover:not-disabled:text-white hover:not-disabled:shadow-[0_4px_10px_rgba(121,217,255,0.4)] disabled:cursor-not-allowed disabled:opacity-40"
+                :disabled="currentPage === 1"
+                @click="currentPage--"
+              >
+                上一页
+              </button>
+              <span class="text-base font-medium text-gray-100">
+                第 {{ currentPage }} / {{ totalPages }} 页
+              </span>
+              <button
+                class="cursor-pointer rounded-lg border-0 bg-[#e9ecef] px-4 py-1.5 text-sm font-medium text-[#495057] transition-all duration-200 hover:not-disabled:-translate-y-0.5 hover:not-disabled:bg-[rgba(121,217,255,1)] hover:not-disabled:text-white hover:not-disabled:shadow-[0_4px_10px_rgba(121,217,255,0.4)] disabled:cursor-not-allowed disabled:opacity-40"
+                :disabled="currentPage >= totalPages"
+                @click="currentPage++"
+              >
+                下一页
               </button>
             </div>
           </div>
         </div>
       </MenuItem>
     </MenuPage>
-
-    <!-- 三级详情：会话详情 → 角色详情 / 用户详情 -->
-    <Teleport to="body">
-      <div
-        v-if="detailOpen"
-        class="fixed inset-0 z-[9000] flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
-        @click.self="closeDetail"
-      >
-        <div
-          class="flex max-h-[82vh] w-[min(920px,92vw)] flex-col overflow-hidden rounded-2xl border border-white/20 bg-white/10 backdrop-blur-xl shadow-[0_24px_70px_rgba(0,0,0,0.55)]"
-        >
-          <div class="flex items-center justify-between border-b border-white/10 px-5 py-3">
-            <div class="flex items-center gap-2 text-sm">
-              <button
-                class="cursor-pointer rounded-md px-2 py-1 transition-colors duration-200"
-                :class="
-                  level === 'session'
-                    ? 'text-white'
-                    : 'text-white/45 hover:bg-white/10 hover:text-white'
-                "
-                @click="level = 'session'"
-              >
-                会话详情
-              </button>
-              <template v-if="level !== 'session'">
-                <span class="text-white/25">/</span>
-                <span class="rounded-md bg-white/10 px-2 py-1 font-semibold text-white">
-                  {{ level === "character" ? "角色详情" : "用户详情" }}
-                </span>
-              </template>
-            </div>
-            <button
-              class="cursor-pointer rounded-md p-1 text-white/50 transition-colors duration-200 hover:bg-white/10 hover:text-white"
-              title="关闭"
-              @click="closeDetail"
-            >
-              <X :size="18" />
-            </button>
-          </div>
-
-          <div
-            v-if="activeRecord"
-            class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-white/10 px-5 py-2 font-mono text-xs text-white/45"
-          >
-            <span class="font-bold text-white/70">No.{{ activeIndex + 1 }}</span>
-            <span>{{ activeRecord.jobName }}</span>
-            <span class="text-white/20">·</span>
-            <span>{{ activeRecord.personaName }}</span>
-            <span class="text-white/20">·</span>
-            <span>{{ formatDate(activeRecord.date) }}</span>
-            <span class="text-white/20">·</span>
-            <span>{{ activeRecord.duration }}</span>
-            <span class="text-white/20">·</span>
-            <span>{{ activeRecord.score }} 分</span>
-          </div>
-
-          <div
-            class="history-modal-body scroll-brand scrollbar-thin min-h-0 flex-1 overflow-y-auto px-5 py-4 text-white"
-            style="line-height: 1.9; font-size: 16px"
-          >
-            <DialogSession
-              v-if="level === 'session'"
-              :dialog="sessionMessages"
-              @open-user="openUser"
-              @open-character="openCharacter"
-            />
-
-            <div v-else-if="activeMessage" class="space-y-4">
-              <div class="rounded-xl border border-white/15 bg-black/20 p-4">
-                <DialogCharacter
-                  v-if="level === 'character'"
-                  :name="activeMessage.displayName"
-                  :content="activeMessage.content"
-                  :action_content="activeMessage.motionText"
-                  :emotionTag="activeMessage.originalTag ?? ''"
-                  :emotionText="activeMessage.comment ?? ''"
-                />
-                <DialogUser
-                  v-else
-                  :name="activeMessage.displayName"
-                  :content="activeMessage.content"
-                />
-              </div>
-
-              <div class="space-y-2">
-                <div
-                  v-for="row in detailRows"
-                  :key="row.label"
-                  class="flex gap-3 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm"
-                >
-                  <span class="w-20 shrink-0 text-white/45">{{ row.label }}</span>
-                  <span class="min-w-0 flex-1 leading-normal text-white/85">{{ row.value }}</span>
-                </div>
-              </div>
-
-              <button
-                class="cursor-pointer rounded-md border border-white/15 bg-white/5 px-3 py-1.5 text-xs text-white/60 transition-colors duration-200 hover:border-[rgba(121,217,255,0.4)] hover:bg-white/10 hover:text-white"
-                @click="level = 'session'"
-              >
-                返回会话详情
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
-import { ChevronRight, Clock, History, X } from "@lucide/vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { History } from "@lucide/vue";
 import { MenuItem, MenuPage } from "../../ui";
-import DialogSession, { type SessionMessage } from "../history/DialogSession.vue";
-import DialogCharacter from "../history/DialogCharacter.vue";
-import DialogUser from "../history/DialogUser.vue";
-import { store } from "../../../store/appStore";
-import type { InterviewRecord } from "../../../data/mock";
+import { fetchMessages, fetchSessions, type SessionMessage } from "../../../api/chat";
 
-type SaveRecord = InterviewRecord & {
-  saveTitle?: string;
-  transcript?: { role: "ai" | "user"; text: string; time: string }[];
-};
+/**
+ * 对话历史页（对齐上游 `SettingsHistory.vue`，基准 5a778fab）。
+ *
+ * <p>形态是「一条连续对话流」而不是记录卡片：同一人连续说话合并成块，
+ * 每句拆正文段 / （动作）段，旁白不冠名且整段斜体，有思考链的块带折叠胶囊，
+ * 每 100 条一页，打开跳最后一页并滚到底。
+ *
+ * <p>上游还有两块本批没做：① 语音播放 / 补生成（依赖 TTS，属课设指标 #10）；
+ * ② 回溯（依赖后端截断接口 + 会话级生成锁，属批次 8）。数据位 `userMessageSeq`
+ * 已就绪，接口挂上即可。
+ */
 
-type DetailLevel = "session" | "character" | "user";
-
-const records = computed(() => store.records as SaveRecord[]);
-
-const recordTitle = (record: SaveRecord) => record.saveTitle || `${record.jobName} 面试`;
-const recordSummary = (record: SaveRecord) =>
-  record.advice[0] || `${record.duration} · 共 ${record.questions.length} 题`;
-
-const pad2 = (n: number) => String(n).padStart(2, "0");
-
-function formatDate(value: string): string {
-  const date = new Date(value.replace(/-/g, "/"));
-  if (Number.isNaN(date.getTime())) return value;
-  return `${date.getFullYear()}.${pad2(date.getMonth() + 1)}.${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+interface Segment {
+  type: "dialogue" | "action";
+  text: string;
 }
 
-// ---------- 弹窗状态 ----------
-const detailOpen = ref(false);
-const level = ref<DetailLevel>("session");
-const activeRecord = ref<SaveRecord | null>(null);
-const activeMessage = ref<SessionMessage | null>(null);
+interface LineEntry {
+  segments: Segment[];
+  /** TODO(批次8)：回溯定位用 */
+  userMessageSeq?: number;
+  thinking?: string;
+}
 
-const activeIndex = computed(() => {
-  const rec = activeRecord.value;
-  return rec ? records.value.findIndex((r) => r.id === rec.id) : -1;
+interface HistoryBlock {
+  displayName: string;
+  isNarration: boolean;
+  lines: LineEntry[];
+  userMessageSeq?: number;
+  /** 该块（一轮生成）的思考链，取块内最后一条非空值 */
+  thinking?: string;
+}
+
+const contentRef = ref<HTMLDivElement | null>(null);
+
+/** 补生成语音写回时抑制自动滚动（上游 generateVoice 用）。本项目暂无语音，保留语义位。 */
+let suppressAutoScroll = false;
+
+const loading = ref(true);
+const loadError = ref(false);
+const dialogHistory = ref<SessionMessage[]>([]);
+
+/** 旁白 / 系统：不冠名、不加书名号、整段斜体 */
+const narrationNames = new Set(["", "旁白", "系统", "Narrator", "System"]);
+/** 全角括号动作标记，prompt 里定死的格式，不许改成半角 */
+const ACTION_RE = /（[^）]*）/;
+
+/** 每页显示的台词数量 */
+const PAGE_SIZE = 100;
+
+/** 当前页码 */
+const currentPage = ref(1);
+
+/** 思考过程展开状态（key: 对话块索引），默认全部折叠 */
+const expandedThinking = ref<Set<number>>(new Set());
+
+function isThinkingExpanded(blockIdx: number): boolean {
+  return expandedThinking.value.has(blockIdx);
+}
+
+function toggleThinking(blockIdx: number): void {
+  const next = new Set(expandedThinking.value);
+  if (next.has(blockIdx)) {
+    next.delete(blockIdx);
+  } else {
+    next.add(blockIdx);
+  }
+  expandedThinking.value = next;
+}
+
+const totalPages = computed(() => Math.ceil(dialogHistory.value.length / PAGE_SIZE));
+
+const currentPageHistory = computed(() => {
+  const start = (currentPage.value - 1) * PAGE_SIZE;
+  const end = start + PAGE_SIZE;
+  return dialogHistory.value.slice(start, end);
 });
 
-/** 会话内容：优先用存档时的对话快照，没有快照就按逐题复盘还原一问一答 */
-const sessionMessages = computed<SessionMessage[]>(() => {
-  const rec = activeRecord.value;
-  if (!rec) return [];
+const groupedHistory = computed<HistoryBlock[]>(() => {
+  const blocks: HistoryBlock[] = [];
 
-  if (rec.transcript?.length) {
-    return rec.transcript.map((line, i) => ({
-      id: `${rec.id}-t${i}`,
-      type: line.role === "ai" ? ("reply" as const) : ("message" as const),
-      displayName: line.role === "ai" ? rec.personaName : "求职者",
-      content: line.text,
-      originalTag: line.role === "ai" ? "面试官发言" : "求职者发言",
-      isFinal: i === rec.transcript!.length - 1,
-    }));
+  for (const msg of currentPageHistory.value) {
+    if (!msg.content || msg.content.trim() === "") continue;
+
+    const isNarration = narrationNames.has(msg.displayName || "");
+
+    const name = isNarration
+      ? ""
+      : msg.displayName || (msg.role === "user" ? "我" : "未知的声音");
+
+    // 用户输入不做（…）动作切分，原样显示
+    const segments =
+      msg.role === "user"
+        ? [{ type: "dialogue" as const, text: msg.content }]
+        : parseSegments(msg.content, msg.action ?? undefined, isNarration);
+
+    const entry: LineEntry = {
+      segments,
+      userMessageSeq: msg.userMessageSeq ?? undefined,
+      thinking: msg.thinking ?? undefined,
+    };
+
+    const last = blocks.length > 0 ? blocks[blocks.length - 1] : null;
+    if (last && last.displayName === name && last.isNarration === isNarration) {
+      if (typeof entry.userMessageSeq === "number" && last.userMessageSeq === undefined) {
+        last.userMessageSeq = entry.userMessageSeq;
+      }
+      if (entry.thinking) {
+        last.thinking = entry.thinking;
+      }
+      last.lines.push(entry);
+    } else {
+      blocks.push({
+        displayName: name,
+        isNarration,
+        lines: [entry],
+        userMessageSeq: entry.userMessageSeq,
+        thinking: entry.thinking,
+      });
+    }
   }
 
-  const list: SessionMessage[] = [];
-  rec.questions.forEach((q, i) => {
-    list.push({
-      id: `${rec.id}-q${i}`,
-      type: "reply",
-      displayName: rec.personaName,
-      content: q.question,
-      motionText: `考察：${q.kp}`,
-      originalTag: `${q.kp} · ${q.score} 分`,
-      score: q.score,
-      comment: q.comment,
-    });
-    list.push({
-      id: `${rec.id}-a${i}`,
-      type: "message",
-      displayName: "求职者",
-      content: `复盘要点：${q.suggest}`,
-      originalTag: `本题 ${q.score} 分`,
-      score: q.score,
-      comment: q.suggest,
-    });
-  });
-  return list;
+  return blocks;
 });
 
-const detailRows = computed(() => {
-  const msg = activeMessage.value;
-  if (!msg) return [];
-  const rows = [
-    {
-      label: msg.type === "reply" ? "面试官" : "我的身份",
-      value: msg.type === "reply" ? (activeRecord.value?.personaName ?? "") : "求职者",
-    },
-    { label: "本题得分", value: typeof msg.score === "number" ? `${msg.score} 分` : "" },
-    { label: msg.type === "reply" ? "面试官点评" : "复盘建议", value: msg.comment ?? "" },
-  ];
-  return rows.filter((r) => r.value);
+function stripTrailPeriod(text: string): string {
+  return text.replace(/[。]+$/, "");
+}
+
+function parseSegments(
+  raw: string,
+  actionPart: string | undefined,
+  isNarration: boolean,
+): Segment[] {
+  const segments: Segment[] = [];
+  let remaining = raw;
+  const actions: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = ACTION_RE.exec(remaining)) !== null) {
+    if (match.index > 0) {
+      let text = remaining.substring(0, match.index);
+      if (!isNarration) text = stripTrailPeriod(text);
+      if (text.trim()) segments.push({ type: "dialogue", text });
+    }
+    actions.push(match[0]);
+    remaining = remaining.substring(match.index + match[0].length);
+  }
+
+  remaining = remaining.trim();
+  if (remaining) {
+    if (!isNarration) remaining = stripTrailPeriod(remaining);
+    segments.push({ type: "dialogue", text: remaining });
+  }
+
+  if (actionPart) {
+    segments.push({ type: "action", text: actionPart });
+  }
+
+  return segments;
+}
+
+/** 滚动到内容底部（最新记录） */
+async function scrollToBottom(): Promise<void> {
+  await nextTick();
+  if (contentRef.value) {
+    contentRef.value.scrollTop = contentRef.value.scrollHeight;
+  }
+}
+
+async function load(): Promise<void> {
+  loading.value = true;
+  loadError.value = false;
+  try {
+    const sessions = await fetchSessions();
+    if (sessions.length === 0) {
+      dialogHistory.value = [];
+      return;
+    }
+    // 会话 id 只活在 InterviewRoomView 的局部 ref 里，历史页拿不到 → 取 id 最大的那场
+    const latest = sessions.reduce((max, s) => (s.id > max.id ? s : max), sessions[0]);
+    dialogHistory.value = await fetchMessages(latest.id);
+  } catch (e) {
+    console.error("加载对话历史失败:", e);
+    loadError.value = true;
+    dialogHistory.value = [];
+  } finally {
+    loading.value = false;
+  }
+}
+
+// 打开面板时自动跳转到最后一页，并滚动到底部
+onMounted(async () => {
+  await load();
+  if (dialogHistory.value.length > 0) {
+    currentPage.value = totalPages.value;
+    await scrollToBottom();
+  }
 });
 
-function openDetail(record: SaveRecord): void {
-  activeRecord.value = record;
-  activeMessage.value = null;
-  level.value = "session";
-  detailOpen.value = true;
-}
+// 当切换到最后一页时，自动滚动到底部（补语音期间跳过）
+watch([currentPage, groupedHistory], async () => {
+  if (suppressAutoScroll) return;
+  if (currentPage.value === totalPages.value) {
+    await scrollToBottom();
+  }
+});
 
-function openCharacter(message: SessionMessage): void {
-  activeMessage.value = message;
-  level.value = "character";
-}
-
-function openUser(message: SessionMessage): void {
-  activeMessage.value = message;
-  level.value = "user";
-}
-
-function closeDetail(): void {
-  detailOpen.value = false;
-  activeMessage.value = null;
-  level.value = "session";
-}
-
-function onKeydown(e: KeyboardEvent): void {
-  if (e.key === "Escape" && detailOpen.value) closeDetail();
-}
-
-onMounted(() => window.addEventListener("keydown", onKeydown));
-onUnmounted(() => window.removeEventListener("keydown", onKeydown));
+// 新消息到达时跳转到最后一页（只监听长度变化；audioFile 回填不动长度）
+watch(
+  () => dialogHistory.value.length,
+  () => {
+    currentPage.value = totalPages.value;
+  },
+);
 </script>
 
 <style scoped>
@@ -307,14 +334,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   height: 100%;
 }
 
-/* 会话详情里一条台词与下一条之间留一点呼吸（原版 DialogSession 自身行高 1.2） */
-.history-modal-body :deep(.message-item) {
-  margin-bottom: 8px;
-  line-height: 1.7;
-}
-
-/* 滚动条染色：原来是 Tailwind 任意属性写法 [scrollbar-color:var(...)]，
-   按 V4 规格 A 挪进 <style>（CSS 属性里用 var(--accent-color) 是合法用法） */
+/* 滚动条染色（Tailwind v4 里 CSS 属性用 var() 合法，挪进 <style> 更稳） */
 .scroll-brand {
   scrollbar-color: var(--accent-color, #79d9ff) transparent;
 }

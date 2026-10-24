@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -65,10 +66,26 @@ public class SessionController {
         return engine.list(status);
     }
 
+    /**
+     * 台词列表（历史对话流的数据源，对齐 {@code convert_init_lines} 的落库顺序）。
+     *
+     * <p>{@code userMessageSeq} 在这里统一编号：按 {@code seq} 升序扫，每遇到 {@code role=user}
+     * 就 +1 并写回该行。后端不存这一列（存了会和落库时序打架），编号规则与
+     * {@code GameMessage.user_message_seq} 一致。
+     */
     @GetMapping("/{id}/messages")
     public List<SessionMessageView> messages(@PathVariable Long id,
                                              @RequestParam(defaultValue = "0") int afterSeq) {
-        return chatService.listMessages(id, afterSeq);
+        List<SessionMessageView> views = new ArrayList<>(chatService.listMessages(id, afterSeq));
+        int userSeq = 0;
+        for (int i = 0; i < views.size(); i++) {
+            SessionMessageView view = views.get(i);
+            if ("user".equals(view.role())) {
+                userSeq += 1;
+                views.set(i, view.withUserMessageSeq(userSeq));
+            }
+        }
+        return views;
     }
 
     /** 推进剧本到下一个阻塞点（input / free_dialogue / 结束）。 */

@@ -90,7 +90,7 @@ public class PlayerIdentityController {
         return ResponseEntity.ok(view(service.save(toEntity(body, identityId))));
     }
 
-    /** 删除；被引用 → 409 {@code IDENTITY_IN_USE}，当前身份 → 409 {@code IDENTITY_IS_CURRENT}，不存在 → 404。 */
+    /** 删除；被引用 → 409 {@code IDENTITY_IN_USE}，不存在 → 404，成功 → 200 {@code {"deleted":true}}。 */
     @DeleteMapping("/{identityId}")
     public ResponseEntity<Object> delete(@PathVariable String identityId) {
         try {

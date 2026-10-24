@@ -1,0 +1,24 @@
+批次7: 对话历史页对齐 dev（issue #15 主体）
+
+修一个实测发现的死锁
+- 删身份的「当前身份不可删」护栏撤掉：原版 api_player_identity.rs:114 只挡
+  「有存档引用」，不挡「是当前」。加了它之后库里只剩一张卡时切不出去也删不掉。
+  删完 current() 自然为空，list() 回落到虚拟默认身份。
+
+后端
+- SessionMessageView 扩到 11 字段：新增 identityId / displayName / userMessageSeq
+- userMessageSeq 在 SessionController 里按 seq 顺序现算（1-based，只给 role=user），
+  不落物理列——落了会和落库时序打架；批次 8 的回溯截断靠它定位
+- ChatService.saveMessage 加 speakerName 参数：面试官行落 display_name = 角色名。
+  端到端实测发现面试官行 displayName 为 null，历史页会把它当旁白渲染成斜体不冠名
+
+前端
+- SettingsHistory.vue 从「面试记录卡片网格」重写成「连续对话流」：
+  groupedHistory 合并连续同人、parseSegments 拆正文/（动作）全角正则、
+  思考链折叠胶囊、100 条一页、打开跳末页滚到底、加载态与空态
+- 数据改从 GET /api/sessions/{id}/messages 读，不再读 store.records（mock）
+- chat.ts 的 SessionMessage 接口补 5 个字段对齐后端 record
+- 语音与回溯按上游逐字保留数据位，功能留到批次 8 / 课设指标 #10
+
+验收：mvn.sh test 396 tests 0 failures 0 errors；npm run build 通过；
+SSE 实测事件名仍为 ai:thinking/ai:reply/status:reset（161/3/1）

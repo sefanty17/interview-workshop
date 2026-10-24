@@ -61,7 +61,9 @@ class PlayerIdentityControllerTest {
     }
 
     @Test
-    void 当前身份不可删() throws Exception {
+    void 当前身份也能删且删完回落到默认身份() throws Exception {
+        // 对齐 api_player_identity.rs:114 —— 原版只挡「有存档引用」，不挡「是当前」。
+        // 早期加了「当前不可删」会死锁：库里只剩一张卡时切不出去也删不掉。
         String created = mockMvc.perform(post("/api/player-identities")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"当前身份\"}"))
@@ -71,8 +73,12 @@ class PlayerIdentityControllerTest {
                 .andExpect(status().isOk());
 
         mockMvc.perform(delete("/api/player-identities/" + identityId))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error").value("IDENTITY_IS_CURRENT"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deleted").value(true));
+
+        // 真删掉了（不是软删），详情回 404
+        mockMvc.perform(get("/api/player-identities/" + identityId))
+                .andExpect(status().isNotFound());
     }
 
     @Test

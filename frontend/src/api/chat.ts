@@ -50,6 +50,16 @@ export interface SessionMessage {
   emotion: string | null;
   action: string | null;
   originalTag: string | null;
+  /** 说话角色：0 = 玩家、N = 角色 id、null = 旁白 / system（对齐 line.sender_role_id） */
+  senderRoleId: number | null;
+  /** 本轮最终句的思考链；其余行 null（对齐 line.thinking） */
+  thinking: string | null;
+  /** 玩家说的是哪个身份（对齐 line.identity_id），非玩家行 null */
+  identityId: string | null;
+  /** 历史里显示成谁说的（对齐 line.display_name）；玩家行必填，旁白 / system 行 null */
+  displayName: string | null;
+  /** 本场第几条用户消息（1-based，只对 role=user 有值）；批次 8 的回溯按钮用它定位 */
+  userMessageSeq: number | null;
 }
 
 /** `GET /api/sessions/{id}` 的返回体（规格 S4 §改动1-4）。
