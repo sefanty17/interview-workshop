@@ -34,12 +34,20 @@ const emit = defineEmits<{
   leave: [];
 }>();
 
+/**
+ * Tab 顺序逐字对齐原版 `EditorHeader.vue:39-49`：
+ * flow → config → characters → assets → validate → agent-chat → agent-settings → appearance。
+ *
+ * 本项目之前把「校验 / 素材 / 角色」排成了 校验 → 素材 → 角色，与原版的
+ * 角色 → 素材 → 校验 正好相反；宿主 `TABS` 数组与这里的顺序必须一致，
+ * 否则转场方向会算反（它是按索引前后判前进/后退的）。
+ */
 const tabs: { key: EditorTabKey; label: string; icon: IconType }[] = [
   { key: "flow", label: "章节流程", icon: "adventure" },
   { key: "config", label: "剧本设置", icon: "setting" },
-  { key: "validate", label: "校验", icon: "achievement" },
-  { key: "assets", label: "素材", icon: "background" },
   { key: "characters", label: "角色", icon: "character" },
+  { key: "assets", label: "素材", icon: "background" },
+  { key: "validate", label: "校验", icon: "achievement" },
   { key: "agent-chat", label: "AI 助手", icon: "bot" },
   { key: "agent-settings", label: "助手设置", icon: "sliders" },
   { key: "appearance", label: "外观", icon: "palette" },
@@ -108,12 +116,18 @@ const observeNav = () => {
 };
 
 const switchTab = (key: EditorTabKey) => {
-  // 原版这里对 validate / assets / characters 三个 Tab 做预加载；config 不需要额外动作
-  // （原版 EditorHeader:125：无剧本时 flow / agent-chat / agent-settings / appearance 仍可进）
+  // 原版 EditorHeader:125：无剧本时 flow / agent-chat / agent-settings / appearance 仍可进
   if (!store.detail && !NO_SCRIPT_TABS.includes(key)) return;
   store.tab = key;
   // 原版对校验页做预加载：进页面就先跑一遍，作者不用先点「重新校验」
   if (key === "validate") void runValidation();
+  // 回到流程图时强制走一遍「落盘 → 重新校验」：图上画的是 report.edges，而校验读的是
+  // 库与磁盘，自动保存的 800ms 没到点时图上仍是旧连线（对齐原版 EditorHeader:134-135）。
+  // 只在「已在流程图」时触发 —— 从章节编辑退出另有 backToFlow，别重复落盘。
+  if (key === "flow" && store.level === "flow") void backToFlow();
+  // 原版在这里还刷新素材与角色（store.refreshAssetFiles / refreshGlobalAssets /
+  // refreshGlobalCharacters）。本项目这两个 Tab 自己 onMounted 拉数据、不走 store 持有，
+  // 所以没有对应的刷新动作 —— 属架构差异，不是漏做（见 docs 里的实现方式差异清单）。
 };
 
 // ---- 面包屑 / 保存态 ----

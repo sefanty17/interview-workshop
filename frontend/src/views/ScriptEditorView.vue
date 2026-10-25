@@ -18,8 +18,13 @@
 
     <EditorHeader @leave="leave" />
 
+    <!-- 原版这里有一条「试玩前置条件不满足」的常驻横幅（ScriptEditor.vue:26-34，
+         读 store.readiness：等作者点了「试玩」才报，他会先对着卡住的画面困惑一阵）。
+         本项目 store 没有 readiness 字段、后端也没有对应接口，先留空不渲染 ——
+         不自己编一个半成品判断，要补就后端先出 readiness。 -->
+
     <div class="relative h-[calc(100%-5.5rem)] min-h-0">
-      <Transition name="tab-slide">
+      <Transition :name="transitionName">
         <component
           :is="currentTabComponent"
           :key="tabKey"
@@ -42,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import type { Component } from "vue";
 import EditorHeader from "../components/script-editor/panels/EditorHeader.vue";
@@ -72,6 +77,7 @@ import {
   stopPreview,
   store,
   undo,
+  type EditorTabKey,
 } from "../store/scriptEditor";
 import { bindingMatches, type ShortcutAction } from "../utils/shortcuts";
 // 默认背景与主菜单同款（对齐原版 ScriptEditor.vue 的 defaultBg import）
@@ -102,6 +108,24 @@ const agentChatTab = defineComponent({
     h("div", { class: "mx-auto flex min-h-0 w-[96%] flex-1 gap-5 px-3 py-4" }, h(AgentChatPanel)),
 });
 
+/**
+ * Tab 顺序（逐字对齐原版 `ScriptEditor.vue:105-114`，与 EditorHeader 导航一致）。
+ *
+ * 它有两个用处：①算切换方向（见 `transitionName`）；②Tab 的先后就是作者的心理顺序，
+ * 别按自己的习惯挪 —— 本项目之前把 validate / assets / characters 排成了
+ * validate → assets → characters，与原版 characters → assets → validate 相反。
+ */
+const TABS: EditorTabKey[] = [
+  "flow",
+  "config",
+  "characters",
+  "assets",
+  "validate",
+  "agent-chat",
+  "agent-settings",
+  "appearance",
+];
+
 const tabComponents: Record<string, Component> = {
   flow: FlowTab,
   config: ConfigTab,
@@ -112,6 +136,23 @@ const tabComponents: Record<string, Component> = {
   "agent-chat": agentChatTab,
   "agent-settings": menuTab(AgentSettingsPanel),
 };
+
+/**
+ * 转场方向：前进 → slide-left（新页从右进），后退 → slide-right；首尾 wrap 视为前进。
+ * 对齐原版 `ScriptEditor.vue:180-193`。
+ */
+const transitionName = ref<"slide-left" | "slide-right">("slide-left");
+watch(
+  () => store.tab,
+  (newTab, oldTab) => {
+    if (!oldTab) return;
+    const prevIdx = TABS.indexOf(oldTab);
+    const nextIdx = TABS.indexOf(newTab);
+    if (prevIdx < 0 || nextIdx < 0) return;
+    const forward = nextIdx > prevIdx || (prevIdx === TABS.length - 1 && nextIdx === 0);
+    transitionName.value = forward ? "slide-left" : "slide-right";
+  },
+);
 
 /**
  * 选哪个组件上屏。
@@ -289,18 +330,30 @@ onBeforeUnmount(() => {
  * 原版用推入推出（方向随 Tab 顺序：slide-left / slide-right），本批只有两个 Tab，
  * 直接用淡入淡出 + 12px 位移，E4 加 Flow 时间线后再换成推入推出。
  */
-.tab-slide-enter-active,
-.tab-slide-leave-active {
+/* Tab 推入推出：方向随 Tab 顺序前进/后退（对齐原版 slide-left / slide-right）。
+   前进时新页从右边进、旧页往左退；后退反之。 */
+.slide-left-enter-active,
+.slide-left-leave-active,
+.slide-right-enter-active,
+.slide-right-leave-active {
   transition:
     opacity 0.2s ease,
     transform 0.2s ease;
 }
-.tab-slide-enter-from {
+.slide-left-enter-from {
   opacity: 0;
   transform: translateX(12px);
 }
-.tab-slide-leave-to {
+.slide-left-leave-to {
   opacity: 0;
   transform: translateX(-12px);
+}
+.slide-right-enter-from {
+  opacity: 0;
+  transform: translateX(-12px);
+}
+.slide-right-leave-to {
+  opacity: 0;
+  transform: translateX(12px);
 }
 </style>

@@ -2,8 +2,17 @@
 /**
  * 新建弹窗（对照原版 `modals/EditorModals.vue`，322 行）。
  *
- * 本批只保留 script / chapter 两个分支：角色、导入角色、试玩预览等分支属于 E6 之后，
- * 原版依赖的 `Toggle` / `store.globalCharacters` 在本项目都还没有对应实现。
+ * 只保留 script / chapter 两个分支。原版还有 `character`（新建/编辑角色）与
+ * `importChar`（从磁盘导入角色目录）两个分支，本项目**不做**，不是漏做：
+ * - 原版那两个分支由 CharactersTab emit `new-character` / `import-character` 触发；
+ * - 本项目 `tabs/CharactersTab.vue` 自己走 `/api/editor/characters` 完成同样的
+ *   新建 / 编辑 / 删除（后端 CharacterController 有 POST/PUT/DELETE），
+ *   能力等价，只是不经过这个弹窗；
+ * - `importChar` 从磁盘导目录是 Tauri 能力，网页版本就没有，两版都不做。
+ *
+ * 剧本字段也与原版不同：原版是 `folderName` + `isAdventure` + `boundCharacterFolder`
+ * （galgame 的冒险模式），本项目是 `code` + `scriptName` + 岗位 / 面试官 / 难度 / 公司风格
+ * —— 这是领域差异，不是漏字段。
  */
 import { reactive, computed } from "vue";
 import { createChapter, createScript } from "../../../store/scriptEditor";
