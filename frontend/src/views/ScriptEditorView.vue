@@ -65,7 +65,6 @@ import {
   duplicateEvent,
   initEditor,
   moveEvent,
-  NO_SCRIPT_TABS,
   redo,
   removeEvent,
   saveNow,
@@ -117,14 +116,16 @@ const tabComponents: Record<string, Component> = {
 /**
  * 选哪个组件上屏。
  *
- * <p>没打开剧本时回落到剧本列表 —— 但**不是所有 Tab 都回落**：
- * `NO_SCRIPT_TABS`（对齐原版 EditorHeader:125）里的四项照常渲染，
- * 否则 AI 助手 / 助手设置即使按钮没置灰也会被弹回列表。
+ * <p>**只有 flow 这一档回落**（逐字对齐原版 `ScriptEditor.vue:167-171`）：
+ * 没打开剧本时 flow 显示剧本列表，其余 Tab 一律照常渲染。
+ *
+ * <p>之前误把「无剧本可点的 Tab 白名单」当成「无剧本照常渲染的白名单」，
+ * 结果 flow 在无剧本时渲染了 FlowTab → ChapterFlow 等 report 等到天亮，
+ * 页面永久停在「正在读取章节跳转关系…」，连新建剧本的入口都出不来。
  */
 const currentTabComponent = computed<Component>(() => {
-  if (store.detail) return tabComponents[store.tab] ?? FlowTab;
-  if (NO_SCRIPT_TABS.includes(store.tab)) return tabComponents[store.tab];
-  return ScriptListPanel;
+  if (store.tab === "flow") return store.detail ? FlowTab : ScriptListPanel;
+  return tabComponents[store.tab] ?? FlowTab;
 });
 
 /**
@@ -136,9 +137,9 @@ const currentTabComponent = computed<Component>(() => {
  * 元素上，整块章节编辑区变成全透明。
  */
 const tabKey = computed<string>(() => {
-  if (store.tab === "appearance") return "tab-appearance";
+  if (store.tab !== "flow") return `tab-${store.tab}`;
   if (!store.detail) return "flow-list";
-  return store.tab === "flow" ? `flow-${store.level}` : `tab-${store.tab}`;
+  return store.level === "chapter" ? "flow-chapter" : "flow-chapters";
 });
 
 /** 编辑器背景图源：自定义时用素材 URL（追加 ?v= 做缓存击穿），默认时用内置背景图。
