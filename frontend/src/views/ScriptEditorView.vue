@@ -65,6 +65,7 @@ import {
   duplicateEvent,
   initEditor,
   moveEvent,
+  NO_SCRIPT_TABS,
   redo,
   removeEvent,
   saveNow,
@@ -113,9 +114,17 @@ const tabComponents: Record<string, Component> = {
   "agent-settings": menuTab(AgentSettingsPanel),
 };
 
+/**
+ * 选哪个组件上屏。
+ *
+ * <p>没打开剧本时回落到剧本列表 —— 但**不是所有 Tab 都回落**：
+ * `NO_SCRIPT_TABS`（对齐原版 EditorHeader:125）里的四项照常渲染，
+ * 否则 AI 助手 / 助手设置即使按钮没置灰也会被弹回列表。
+ */
 const currentTabComponent = computed<Component>(() => {
-  if (store.tab === "appearance") return tabComponents.appearance;
-  return store.detail ? (tabComponents[store.tab] ?? FlowTab) : ScriptListPanel;
+  if (store.detail) return tabComponents[store.tab] ?? FlowTab;
+  if (NO_SCRIPT_TABS.includes(store.tab)) return tabComponents[store.tab];
+  return ScriptListPanel;
 });
 
 /**

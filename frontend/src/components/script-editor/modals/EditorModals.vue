@@ -36,12 +36,31 @@ const scriptForm = reactive({
 });
 const chapterForm = reactive({ id: "", name: "" });
 
+/**
+ * 剧本编码留空时从剧本名兜底生成一个。
+ *
+ * <p>后端要求「小写字母开头，仅含小写字母/数字/_/-」，空串直接 400。
+ * 中文剧本名转不出合法字符，这种情况退成时间戳前缀，保证一定能建出来 ——
+ * 编码只是唯一标识，作者真正关心的是剧本名。
+ */
+function fallbackCode(scriptName: string): string {
+  const ascii = scriptName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (ascii && /^[a-z]/.test(ascii)) return ascii;
+  return `script-${Date.now().toString(36)}`;
+}
+
 const confirmModal = async () => {
   const which = props.modal;
-  emit("update:modal", null);
   if (which === "script") {
-    // store 的 action 自己会刷新列表并打开新剧本（作者点「新建」就是想马上写）
-    await createScript({ ...scriptForm });
+    const code = scriptForm.code.trim() || fallbackCode(scriptForm.scriptName);
+    // 成功才关弹窗、才重置表单。原来是「先关再提交」：后端一拒（比如编码撞了已存在的），
+    // 弹窗已经没了、表单也清了，作者看到的就是「点了新建，弹个错，什么都没发生」。
+    const ok = await createScript({ ...scriptForm, code });
+    if (!ok) return;
+    emit("update:modal", null);
     Object.assign(scriptForm, {
       code: "",
       scriptName: "",
@@ -52,6 +71,7 @@ const confirmModal = async () => {
       companyStyle: "",
     });
   } else if (which === "chapter") {
+    emit("update:modal", null);
     await createChapter(chapterForm.id, chapterForm.name);
     chapterForm.id = "";
     chapterForm.name = "";

@@ -45,6 +45,22 @@ export type EditorTabKey =
   | "flow" | "config" | "characters" | "assets"
   | "validate" | "agent-chat" | "agent-settings" | "appearance";
 
+/**
+ * 没打开剧本时仍然能进的 Tab（对齐原版 `EditorHeader.vue:125` 与 `:183-186`）。
+ *
+ * <p>原版白名单是 `flow / agent-chat / agent-settings / appearance` 四项 ——
+ * AI 助手与助手设置不依赖"当前打开了哪个剧本"，作者可以先进去聊剧本大纲，
+ * 聊完再决定打开或新建哪一本。
+ *
+ * <p>本项目此前只写了 `flow / appearance`，AI 助手被挡在门外（2026-10-25 修）。
+ * 这个常量必须被 **三处** 同时消费，漏一处就还是进不去：
+ * ① `EditorHeader.switchTab` 的守卫、② Tab 按钮的 `disabled`、
+ * ③ `ScriptEditorView.currentTabComponent` 的回落判断。
+ */
+export const NO_SCRIPT_TABS: EditorTabKey[] = [
+  "flow", "agent-chat", "agent-settings", "appearance",
+];
+
 export const UNDO_LIMIT = 100;
 export const AUTOSAVE_DELAY = 800;      // 自动保存防抖
 export const VALIDATE_DELAY = 2500;     // 校验比保存重，单独更长防抖
@@ -741,17 +757,21 @@ export async function removeChapter(chapterId: string): Promise<void> {
 
 /**
  * 新建剧本。原版顺序：建完 → 刷新列表 → 直接打开新剧本（作者点了「新建」就是想马上写）。
- * 失败不吞异常：由调用方（弹窗）决定是否关闭，这里只负责弹错误窗。
+ *
+ * @returns 是否成功。失败在这里弹错误窗并返回 false，由调用方（弹窗）决定关不关 ——
+ *          关了就丢掉作者刚填的内容，不如留在原地把编码改掉再试一次。
  */
-export async function createScript(body: CreateScriptBody): Promise<void> {
+export async function createScript(body: CreateScriptBody): Promise<boolean> {
   store.saving = true;
   try {
     const pkg = await apiCreateScript(body);
     await loadScripts();
     await openScript(pkg.key);
     notify("已新建剧本");
+    return true;
   } catch (e) {
     notifyError("新建剧本失败", e);
+    return false;
   } finally {
     store.saving = false;
   }

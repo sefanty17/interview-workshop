@@ -25,7 +25,7 @@ import {
   store,
   undo,
 } from "../../../store/scriptEditor";
-import type { EditorTabKey } from "../../../store/scriptEditor";
+import { NO_SCRIPT_TABS, type EditorTabKey } from "../../../store/scriptEditor";
 import { editorShortcuts } from "../../../store/editorShortcuts";
 import { formatBinding } from "../../../utils/shortcuts";
 
@@ -109,8 +109,8 @@ const observeNav = () => {
 
 const switchTab = (key: EditorTabKey) => {
   // 原版这里对 validate / assets / characters 三个 Tab 做预加载；config 不需要额外动作
-  // （原版 EditorHeader:125：flow 与 appearance 无剧本也可用）
-  if (!store.detail && !["flow", "appearance"].includes(key)) return;
+  // （原版 EditorHeader:125：无剧本时 flow / agent-chat / agent-settings / appearance 仍可进）
+  if (!store.detail && !NO_SCRIPT_TABS.includes(key)) return;
   store.tab = key;
   // 原版对校验页做预加载：进页面就先跑一遍，作者不用先点「重新校验」
   if (key === "validate") void runValidation();
@@ -161,7 +161,7 @@ onUnmounted(() => {
           type="nav"
           :icon="tab.icon"
           :active="store.tab === tab.key"
-          :disabled="!store.detail && !['flow', 'appearance'].includes(tab.key)"
+          :disabled="!store.detail && !NO_SCRIPT_TABS.includes(tab.key)"
           @click="switchTab(tab.key)"
         >
           <p class="hidden xl:block">{{ tab.label }}</p>
