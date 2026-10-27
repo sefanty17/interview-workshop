@@ -103,6 +103,24 @@ export interface AsrSettings {
   /** 失去焦点快捷键可用（全局快捷键）：窗口不在前台时快捷键仍可用（默认关） */
   ptt_global: boolean;
   provider_configs: Record<string, ProviderConfig>;
+
+  // ── 本项目扩展字段（上游 AsrSettings 没有这 6 个）────────────────────
+  // 后端的 `AsrSettings` 里是单独一段「本项目扩展字段」；这里保持同名同序。
+  // 存储已通、执行未接：唤醒词常驻监听与麦克风设备枚举都不在 #8 范围，
+  // 目前只有设置页读写它们（换设备/换浏览器不再丢）。
+
+  /** 唤醒词开关 */
+  wake_word_enabled: boolean;
+  /** 唤醒词文本 */
+  wake_word: string;
+  /** 连续识别：识别完成后继续监听下一轮 */
+  asr_continuous: boolean;
+  /** 静音门控：低于 asr_mic_threshold 的能量不送识别 */
+  asr_mic_gate: boolean;
+  /** 麦克风能量门限（0~1） */
+  asr_mic_threshold: number;
+  /** 麦克风设备 id；"default" = 系统默认设备 */
+  asr_mic_device: string;
 }
 
 /** 与后端 `provider.rs` 的 `ConfigFieldKind`（snake_case 字符串）严格对齐 */

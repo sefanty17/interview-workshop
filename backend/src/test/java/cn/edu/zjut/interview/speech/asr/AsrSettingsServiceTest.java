@@ -103,4 +103,33 @@ class AsrSettingsServiceTest {
 
         assertEquals("qwen-asr", loaded.getActiveProvider());
     }
+
+    /** 本项目扩展的 6 个字段（上游没有）必须跟着整份设置一起有默认值，
+     *  否则设置页那 6 个控件在全新用户下会读到 0 / null 渲染崩。 */
+    @Test
+    void 扩展字段的默认值六项正确() {
+        AsrSettings settings = AsrSettings.defaults();
+
+        assertFalse(settings.isWakeWordEnabled());
+        assertEquals("你好面试官", settings.getWakeWord());
+        assertTrue(settings.isAsrContinuous());
+        assertTrue(settings.isAsrMicGate());
+        assertEquals(0.5, settings.getAsrMicThreshold(), 1e-9);
+        assertEquals("default", settings.getAsrMicDevice());
+    }
+
+    /** 改其中两项 → 落库 → 读回一致（验证 6 个扩展字段真的进了 JSON，不是只在内存里） */
+    @Test
+    void 扩展字段写入后读回一致() {
+        AsrSettings settings = AsrSettings.defaults();
+        settings.setWakeWord("小面试官");
+        settings.setAsrMicThreshold(0.75);
+        service.write(SpeechSettingService.KIND_ASR, settings);
+
+        AsrSettings loaded = service.read(SpeechSettingService.KIND_ASR, AsrSettings.class,
+                AsrSettings.defaults());
+
+        assertEquals("小面试官", loaded.getWakeWord());
+        assertEquals(0.75, loaded.getAsrMicThreshold(), 1e-9);
+    }
 }

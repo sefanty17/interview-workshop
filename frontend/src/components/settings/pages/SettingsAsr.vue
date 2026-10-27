@@ -762,9 +762,61 @@ import {
   Trash2,
 } from "@lucide/vue";
 import { MenuItem, MenuPage } from "../../ui";
-import { notify, store, updateSettings } from "../../../store/appStore";
+import { notify } from "../../../store/appStore";
+import { asrStore } from "../../../store/asrStore";
 import { alertDialog, confirmDialog } from "../../../store/dialogStore";
+import type { AsrSettings } from "../../../api/asr";
 import type { AsrModelState, AsrProviderConfig, SiteSettings } from "../../../data/mock";
+
+// ── 兼容层：语音设置改存后端 speech_setting 表，模板一行不改 ──────────────
+//
+// 模板里有 60 余处对 `store` 上 `settings` 的直读。逐个改成 `asrStore.settings.xxx` 是更坏的选择：
+// 改 60 处、漏一处就是运行时 undefined，而且 diff 会淹没真正的逻辑改动，视觉也无从比对。
+// 所以这里造一个**同形状**的 store 对象，把 `.settings` 投影到 `asrStore.settings`。
+//
+// ⚠️ 投影里额外补的两个键 `asr_last_result` / `asr_model_states` 是运行时态
+// （不落库，见 asrStore 的字段注释）：后端 AsrSettings 没有它们，模板却在读。
+// 模板对本投影**只读**；任何写入都必须走下面的 updateSettings（→ patch），
+// 通过投影写进这个临时对象等于丢弃（每次读都会重新展开一份）。
+//
+// 为什么 `as unknown as SiteSettings` 绕不过：SiteSettings 是设置页的字段全集
+// （TTS / 工具 / 投屏几十个字段），本页只用其中的语音子集，投影不可能补齐其余字段；
+// 换成逐字段映射等于把那 60 处读点重写一遍，正是要避免的事。
+const store = {
+  get settings(): SiteSettings {
+    return {
+      ...asrStore.settings,
+      asr_last_result: asrStore.lastResult,
+      asr_model_states: asrStore.modelStates,
+    } as unknown as SiteSettings;
+  },
+};
+
+/**
+ * 设置写入：本地立即生效 + 500ms debounce 落库（`asrStore.patch` 的语义）。
+ *
+ * 两个运行时字段在这里分流，不进请求体：
+ * - `asr_last_result` → asrStore.lastResult（重启即清空，落库只会留一堆过期结果）
+ * - `asr_model_states` → asrStore.modelStates（桌面端模型下载进度，本项目无本地模型）
+ * 其余键原样交给 patch；`{...current, ...partial}` 与 provider_configs 的逐 provider
+ * 浅合并都在 patch 里（本页的 provider_configs 已经做的是不可变更新，行为等价）。
+ */
+const updateSettings = (patch: Partial<SiteSettings>): void => {
+  const rest: Record<string, unknown> = { ...patch };
+  if ("asr_last_result" in rest) {
+    asrStore.lastResult = String(rest.asr_last_result ?? "");
+    delete rest.asr_last_result;
+  }
+  if ("asr_model_states" in rest) {
+    asrStore.modelStates = rest.asr_model_states as Record<string, AsrModelState>;
+    delete rest.asr_model_states;
+  }
+  // 只改运行时字段时不必打后端：patch 会顺手排一次 PUT，纯浪费
+  if (Object.keys(rest).length === 0) return;
+  // 这里的 `as unknown as` 同上面的理由：SiteSettings 比 AsrSettings 多几十个非语音字段，
+  // 结构上互不兼容；本页的调用点只传语音字段（已逐个核对），约定由调用侧保证。
+  asrStore.patch(rest as unknown as Partial<AsrSettings>);
+};
 
 type FieldKind = "text" | "password" | "password_map" | "number" | "boolean" | "select";
 type SendMode = "fill_only" | "auto_send";
@@ -1434,7 +1486,13 @@ function setNumberFromEvent(key: keyof SiteSettings, event: Event): void {
 }
 
 onMounted(() => {
-  ensureProviderConfig();
+  // 语音设置的真身在后端 speech_setting 表：进页面先拉一次。
+  // load 之前模板读的是 asrStore 的本地默认值（与后端 defaults() 逐字段一致），不会闪错值。
+  void asrStore
+    .load()
+    // 补 default_value 必须排在 load 之后：它改的是本地副本，先改会被 load 的整体替换覆盖
+    .then(() => ensureProviderConfig())
+    .catch((e) => console.warn("[ASR] 拉取语音设置失败:", e));
 });
 
 // 切换服务商：补默认配置 + 同步该地域端点
@@ -1451,7 +1509,12 @@ watch(
   () => applyRegionEndpoints(),
 );
 
-onBeforeUnmount(endPttCapture);
+onBeforeUnmount(() => {
+  endPttCapture();
+  // 离开设置页立刻落库，不等 500ms debounce：用户常常「改完就切页面 / 关窗口」，
+  // 等计时器就可能丢掉最后一次改动。保存失败不抛到用户面前（已经在离开），只记日志。
+  void asrStore.flush().catch((e) => console.warn("[ASR] 离开设置页保存失败:", e));
+});
 </script>
 
 <style scoped>

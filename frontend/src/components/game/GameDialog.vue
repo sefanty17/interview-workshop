@@ -65,7 +65,15 @@
                   title="历史对话"
                   @click="emit('history')"
                 ></Button>
-                <Button type="nav" icon="mic" title="语音输入（待接入）" disabled></Button>
+                <Button
+                  type="nav"
+                  icon="mic"
+                  :title="micTitle"
+                  :class="phase === 'recording' ? 'text-cyan-300 animate-pulse' : ''"
+                  @pointerdown="pttDown"
+                  @pointerup="pttUp"
+                  @pointerleave="pttUp"
+                ></Button>
                 <ScreenshotButton @start="screenshotTip" />
                 <Button type="nav" icon="upload" title="快捷存档" @click="quickSave"></Button>
                 <Button type="nav" icon="download" title="快捷读档" @click="quickLoad"></Button>
@@ -136,6 +144,14 @@ import ScreenshotButton from "./ScreenshotButton.vue";
 import { alertDialog } from "../../store/dialogStore";
 import { notify, persist, store as appStore } from "../../store/appStore";
 import { advance, isShowableLine, roomStore, type RoomLine } from "../../store/roomStore";
+import {
+  registerAsrInputBridge,
+  setChatMounted,
+  useAsrAutoSend,
+  useAsrInput,
+} from "../../composables/asr";
+import { pttDown, pttUp } from "../../composables/asr/ptt";
+import { asrStore } from "../../store/asrStore";
 
 const emit = defineEmits<{
   /** 用户在输入态按 Enter / ▼，参数为已 trim 的文本 */
@@ -340,6 +356,50 @@ watch(
   },
 );
 
+// ─────────────────────────── 语音输入（ASR） ───────────────────────────
+// useAsrInput 的门控全部在 composables/asr 里（总开关 / 对话状态 / 抽屉 / TTS 播放…），
+// 这里只负责「按钮与输入框」这两端：按钮触发录音、识别结果写进 inputMessage。
+const asr = useAsrInput();
+/** 录音相位（idle / recording / recognizing）。ref 在模板里自动解包，脚本里要 .value */
+const { phase } = asr;
+
+const micTitle = computed(() =>
+  phase.value === "recording"
+    ? "松开结束"
+    : phase.value === "recognizing"
+      ? "识别中…"
+      : "按住说话（F8）",
+);
+
+/** 把识别文本填进输入框并聚焦（用户可直接改完再回车） */
+function fillFromAsr(text: string): void {
+  inputMessage.value = text;
+  nextTick(() => textareaRef.value?.focus());
+}
+
+/**
+ * 整句识别结果走 window 事件（`session.ts::handleResult`：fill_only → `asr-text`，
+ * auto_send → `asr-send`），不是走 registerAsrInputBridge——那条桥只服务流式 partial
+ * （`writePartial`，后端 V8 才有）。两者都接上：现在只有事件这条路是活的。
+ */
+function onAsrText(e: Event): void {
+  fillFromAsr(String((e as CustomEvent<string | undefined>).detail ?? ""));
+}
+
+/** auto_send：先显示 800ms 再发送（窗口唯一性由 useAsrAutoSend 保证） */
+const asrAutoSend = useAsrAutoSend((text) => {
+  // 窗口期内用户可能已经改过输入框：内容不是识别结果就不替他发送（尊重手动编辑）
+  if (inputMessage.value !== text) return;
+  sendOrContinue();
+});
+
+function onAsrSend(e: Event): void {
+  const text = String((e as CustomEvent<string | undefined>).detail ?? "");
+  if (!text) return;
+  fillFromAsr(text);
+  asrAutoSend.arm(text);
+}
+
 onMounted(() => {
   if (roomStore.state === "responding") {
     const line = roomStore.lines[roomStore.cursor];
@@ -347,11 +407,29 @@ onMounted(() => {
   } else {
     textareaRef.value?.focus();
   }
+
+  // ── 语音输入接线 ──
+  // 桥必须在 textareaRef 已存在之后注册（onMounted 里 = 已挂载）；卸载不必反注册，
+  // registerAsrInputBridge 是覆盖式注册，下一个房间挂载会重新注册。
+  registerAsrInputBridge((text) => fillFromAsr(text));
+  window.addEventListener("asr-text", onAsrText);
+  window.addEventListener("asr-send", onAsrSend);
+  // 门控开关：只有聊天框挂载期间语音才可用（离开房间由 onBeforeUnmount 置回 false，
+  // 否则语音会在别的页面被触发）
+  setChatMounted(true);
+  // mic 按钮的 pointerdown/pointerup 在模板里直接绑 pttDown/pttUp（见上方按钮）。
+  // PTT 键盘监听不在这里挂：它由 composables/asr/index.ts::ensureInit() 统一注册
+  // （全局一份、永不移除，isAndroid() 时不注册），重复挂只会让每次按键被处理两遍。
+  void asrStore.load();
 });
 
 onBeforeUnmount(() => {
   dialogueTyper.stop();
   motionTyper.stop();
+
+  setChatMounted(false);
+  window.removeEventListener("asr-text", onAsrText);
+  window.removeEventListener("asr-send", onAsrSend);
 });
 
 // ─────────────────────────── 操作按钮 ───────────────────────────

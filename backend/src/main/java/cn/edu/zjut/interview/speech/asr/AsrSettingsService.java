@@ -32,6 +32,9 @@ public class AsrSettingsService {
     private static final int VAD_SILENCE_MAX_MS = 5000;
     private static final int ENERGY_WARMUP_MIN_MS = 0;
     private static final int ENERGY_WARMUP_MAX_MS = 2000;
+    /** 麦克风能量门限的合法区间（本项目扩展字段）：0~1 的比例，不是毫秒也不是百分数。 */
+    private static final double MIC_THRESHOLD_MIN = 0.0;
+    private static final double MIC_THRESHOLD_MAX = 1.0;
 
     private final SpeechSettingService store;
     private final AsrRegistry registry;
@@ -99,6 +102,12 @@ public class AsrSettingsService {
                 || settings.getEnergyWarmupMs() > ENERGY_WARMUP_MAX_MS) {
             throw new AsrException(AsrErrorKind.INVALID_SETTINGS, HttpStatus.BAD_REQUEST,
                     "energy_warmup_ms 必须在 " + ENERGY_WARMUP_MIN_MS + "–" + ENERGY_WARMUP_MAX_MS + " 之间");
+        }
+        // 本项目扩展字段（上游无此项）：门限是 0~1 的比例，越界说明前端算错或手改过请求体，
+        // 落库后会让后续的能量门控永远为真/永远为假，所以拦在 400
+        if (settings.getAsrMicThreshold() < MIC_THRESHOLD_MIN || settings.getAsrMicThreshold() > MIC_THRESHOLD_MAX) {
+            throw new AsrException(AsrErrorKind.INVALID_SETTINGS, HttpStatus.BAD_REQUEST,
+                    "asr_mic_threshold 必须在 " + MIC_THRESHOLD_MIN + "–" + MIC_THRESHOLD_MAX + " 之间");
         }
         settings.setProviderConfigs(withPlaceholders(settings.getProviderConfigs()));
     }

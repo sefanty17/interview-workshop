@@ -8,7 +8,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * ASR 全局设置，字段 1:1 对齐 {@code settings.rs::AsrSettings}。
+ * ASR 全局设置。上游 {@code settings.rs::AsrSettings} 的 11 个字段逐字段 1:1 对齐，
+ * 另有 6 个本项目扩展字段（见下方「本项目扩展字段」，不与上游混算）。
  *
  * <p>JSON 键用 <strong>snake_case</strong>：上游结构体没有 {@code rename_all}，
  * 序列化出来就是 Rust 字段名，LingChat 前端 {@code api/services/asr.ts} 也这么读。
@@ -23,6 +24,22 @@ import java.util.Map;
  *   <li>原版的野值修复（active_provider 不在注册表就回退）在 {@code load} 里做，
  *       本项目放在 {@link AsrSettingsService#load()}。</li>
  * </ol>
+ *
+ * <p><b>本项目扩展字段（6 个，上游 AsrSettings 没有）</b>：UI 是照 LingChat 原版 1:1 还原的，
+ * 设置页里有 6 个上游<b>不存在</b>的控件（唤醒词、连续识别、麦克风设备/门限/门控），
+ * 它们的值原先只存在前端 localStorage。语音设置迁到 {@code speech_setting} 表后，
+ * 留一半在前端就是两份真相（后端读设置时看不到、换设备就丢），所以一并落库：
+ * <ul>
+ *   <li>{@code wake_word_enabled} / {@code wake_word}：唤醒词开关与文本；</li>
+ *   <li>{@code asr_continuous}：连续识别（识别完成后继续监听下一轮）；</li>
+ *   <li>{@code asr_mic_device} / {@code asr_mic_threshold} / {@code asr_mic_gate}：
+ *       麦克风设备、能量门限（0~1）、静音门控。</li>
+ * </ul>
+ *
+ * <p><b>加了字段不等于做了执行</b>：麦克风设备选择要 {@code enumerateDevices} 枚举、
+ * 唤醒词要常驻监听，都不在本批范围。这 6 个字段目前<strong>存储已通、执行未接</strong>，
+ * 真正的消费（门限参与能量判定、设备约束 getUserMedia）在后续批次接线。
+ * 之所以先落库：表的形状一次改到位，免得后面再迁一次数据。
  *
  * <p>字段初始值即默认值（不另写 {@code defaults()} 之外的第二份）：Jackson 反序列化
  * 缺失键时不会动字段，于是「前端只 PUT 两个字段」也能得到完整设置对象。
@@ -86,6 +103,33 @@ public class AsrSettings {
     /** provider id → 该 provider 的配置。默认按注册表填齐占位，设置页打开就能渲染。 */
     @JsonProperty("provider_configs")
     private Map<String, AsrProviderConfig> providerConfigs = new LinkedHashMap<>();
+
+    // ── 本项目扩展字段（上游没有这 6 个，见类注释）──────────────────────
+    // 存储已通、执行未接：字段/JSON 键/默认值先定死，消费它们的逻辑在后续批次。
+
+    /** 唤醒词开关（唤醒词常驻监听未实现，见类注释）。 */
+    @JsonProperty("wake_word_enabled")
+    private boolean wakeWordEnabled = false;
+
+    /** 唤醒词文本。 */
+    @JsonProperty("wake_word")
+    private String wakeWord = "你好面试官";
+
+    /** 连续识别：识别完成后继续监听下一轮。 */
+    @JsonProperty("asr_continuous")
+    private boolean asrContinuous = true;
+
+    /** 静音门控：低于 {@link #asrMicThreshold} 的能量不送识别。 */
+    @JsonProperty("asr_mic_gate")
+    private boolean asrMicGate = true;
+
+    /** 麦克风能量门限，取值 0~1（越界由 {@link AsrSettingsService#validate} 拦下）。 */
+    @JsonProperty("asr_mic_threshold")
+    private double asrMicThreshold = 0.5;
+
+    /** 麦克风设备 id；{@code "default"} = 系统默认设备。 */
+    @JsonProperty("asr_mic_device")
+    private String asrMicDevice = "default";
 
     /**
      * 全新用户的默认设置：providerConfigs 按注册表填齐占位，前端拿到就能渲染。
@@ -192,5 +236,55 @@ public class AsrSettings {
 
     public void setProviderConfigs(Map<String, AsrProviderConfig> providerConfigs) {
         this.providerConfigs = providerConfigs == null ? new LinkedHashMap<>() : providerConfigs;
+    }
+
+    // ── 本项目扩展字段的读写（不参与上游对齐，见类注释）──────────────────
+
+    public boolean isWakeWordEnabled() {
+        return wakeWordEnabled;
+    }
+
+    public void setWakeWordEnabled(boolean wakeWordEnabled) {
+        this.wakeWordEnabled = wakeWordEnabled;
+    }
+
+    public String getWakeWord() {
+        return wakeWord;
+    }
+
+    public void setWakeWord(String wakeWord) {
+        this.wakeWord = wakeWord == null ? "" : wakeWord;
+    }
+
+    public boolean isAsrContinuous() {
+        return asrContinuous;
+    }
+
+    public void setAsrContinuous(boolean asrContinuous) {
+        this.asrContinuous = asrContinuous;
+    }
+
+    public boolean isAsrMicGate() {
+        return asrMicGate;
+    }
+
+    public void setAsrMicGate(boolean asrMicGate) {
+        this.asrMicGate = asrMicGate;
+    }
+
+    public double getAsrMicThreshold() {
+        return asrMicThreshold;
+    }
+
+    public void setAsrMicThreshold(double asrMicThreshold) {
+        this.asrMicThreshold = asrMicThreshold;
+    }
+
+    public String getAsrMicDevice() {
+        return asrMicDevice;
+    }
+
+    public void setAsrMicDevice(String asrMicDevice) {
+        this.asrMicDevice = asrMicDevice == null ? "" : asrMicDevice;
     }
 }

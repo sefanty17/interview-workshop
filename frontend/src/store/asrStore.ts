@@ -5,8 +5,11 @@
  * 设置的唯一真相在后端（`AsrSettingsService` + 数据库），前端只做「内存副本 + 保存」。
  *
  * 三条刻意为之的约定：
- * 1. **不做字段默认值**：`settings` 初始为 null，默认值的单一真相在后端
- *    （`AsrSettings.defaults()`）。前端自己补一套默认值，两边一改就漂移。
+ * 1. **默认值的单一真相仍在后端**（`AsrSettings.defaults()`）。但 `settings` 初值不能是
+ *    null：设置页模板直接读 `store.settings.voice_input_enabled`，null 会渲染崩。
+ *    所以这里放一份与后端 `defaults()` 逐字段一致的本地默认（`DEFAULT_SETTINGS`），
+ *    `load()` 成功后整体替换——它只是 load 返回前的兜底，不是第二套默认值。
+ *    改动后端默认值时必须同步改 `DEFAULT_SETTINGS`（两处漂移会表现为「改完设置页先闪一下旧值」）。
  * 2. `patch` 对 `provider_configs` 逐 provider 浅合并，不能整体替换（详见方法注释）。
  * 3. 保存失败一律抛出/记 `lastError`，绝不静默吞——「设置看起来保存成功、重启没了」
  *    是最难查的一类 bug。
@@ -29,6 +32,45 @@ const SAVE_DEBOUNCE_MS = 500;
 
 let saveTimer: number | undefined;
 
+/**
+ * 单个 provider 的空配置：字段初值与后端 `new AsrProviderConfig()` 一一对应。
+ * 默认 provider 清单与后端 `AsrRegistry.PROVIDER_ORDER` 同序同名，设置页切服务商时
+ * 不会拿到 undefined。
+ */
+function emptyProviderConfig(): ProviderConfig {
+  return { api_keys: {}, api_key: "", endpoint: "", ws_endpoint: "", model: "", region: "" };
+}
+
+/**
+ * 本地默认设置：**逐字段对齐后端 `AsrSettings.defaults()`**（11 个上游字段 + 6 个
+ * 本项目扩展字段）。只在 `load()` 返回前给模板兜底，load 成功即被整体替换。
+ * 注意 `voice_input_enabled` 是 false（后端全新用户默认关语音输入），别「顺手」改成 true。
+ */
+const DEFAULT_SETTINGS: AsrSettings = {
+  active_provider: "qwen-asr",
+  auto_listen: false,
+  send_mode: "fill_only",
+  stream_enabled: false,
+  voice_input_enabled: false,
+  vad_silence_ms: 800,
+  energy_warmup_ms: 100,
+  vad_debug_log: false,
+  ptt_key: '{"key":"f8"}',
+  ptt_global: false,
+  provider_configs: {
+    "qwen-asr": emptyProviderConfig(),
+    "llama-asr": emptyProviderConfig(),
+    "mock-asr": emptyProviderConfig(),
+  },
+  // ── 本项目扩展字段（上游没有）──
+  wake_word_enabled: false,
+  wake_word: "你好面试官",
+  asr_continuous: true,
+  asr_mic_gate: true,
+  asr_mic_threshold: 0.5,
+  asr_mic_device: "default",
+};
+
 /** 取消挂起的 debounce 保存（flush 里先取消，避免「刚 flush 完又被旧 timer 覆盖」）。 */
 function cancelPendingSave(): void {
   if (saveTimer !== undefined) {
@@ -38,9 +80,18 @@ function cancelPendingSave(): void {
 }
 
 export const asrStore = reactive({
-  settings: null as AsrSettings | null,
+  settings: DEFAULT_SETTINGS as AsrSettings,
   models: [] as ModelInfo[],
   loading: false,
+  /**
+   * 是否已经成功从后端 load 过一次。
+   *
+   * why 需要：`settings` 不再是 null（见文件头第 1 条），`patch` 也就失去了
+   * 「没 load 完就丢弃」的天然闸门。若用户在 load 尚未返回时动一下设置，
+   * 就会把本地默认值整份 PUT 覆盖掉后端已有配置（provider 的 Key 一起没）。
+   * 所以闸门改成显式的这个标志。
+   */
+  loaded: false,
   /** 最近一次失败的错误码（`ASR_xxx`）；成功识别/保存后由 clearError 清掉 */
   lastError: null as string | null,
   /**
@@ -54,12 +105,18 @@ export const asrStore = reactive({
   /** 麦克风状态（设置页/按钮显示用；上游同名字段） */
   micState: "idle" as "idle" | "recording" | "denied",
 
+  /** 最近一次识别/测试的结果文本。运行时态，不落库（重启即清空）。 */
+  lastResult: "",
+  /** 桌面端模型下载进度。本项目无本地模型，恒为空对象；保留字段是为了让设置页模板不用改。 */
+  modelStates: {} as Record<string, { installed: boolean; progress: number }>,
+
   /** 从后端拉一次（进入聊天页 / 打开设置页时调用）。 */
   async load(): Promise<void> {
     asrStore.loading = true;
     try {
       const settings = await asrGetSettings();
       asrStore.settings = settings;
+      asrStore.loaded = true;
       // 模型清单拉失败不能连带 load 失败：本地 llama-asr 没启动是常态，
       // 让它把整个设置读崩掉，用户连改 provider 的机会都没有
       await asrStore.reloadModels(settings.active_provider).catch((e) => {
@@ -73,9 +130,9 @@ export const asrStore = reactive({
   /** 本地立即生效 + 500ms debounce 落库（设置页拖动滑块不能每帧发一次 PUT）。 */
   patch(partial: Partial<AsrSettings>): void {
     const current = asrStore.settings;
-    // 还没 load 完就没有可合并的基准：直接丢弃（否则会把空对象当整份设置存回后端，
+    // 还没 load 完就没有可合并的基准：直接丢弃（否则会把本地默认值整份存回后端，
     // 把用户已有的 provider 配置清光）
-    if (!current) return;
+    if (!asrStore.loaded) return;
 
     const next: AsrSettings = { ...current, ...partial };
     if (partial.provider_configs) {
@@ -105,9 +162,9 @@ export const asrStore = reactive({
   /** 立刻落库（不 debounce，用于「保存」按钮 / 关面板前 flush）。失败直接抛出。 */
   async flush(): Promise<void> {
     cancelPendingSave();
-    const settings = asrStore.settings;
-    if (!settings) return;
-    await asrSetSettings(settings);
+    // 同 patch：没 load 成功过就没有「用户当前设置」可言，把本地默认值存回去等于清库
+    if (!asrStore.loaded) return;
+    await asrSetSettings(asrStore.settings);
   },
 
   /**

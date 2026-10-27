@@ -102,6 +102,16 @@ class AsrControllerTest {
     }
 
     @Test
+    void 保存越界的麦克风门限返回400() throws Exception {
+        // 门限是本项目扩展字段（0~1 比例）；越界落库会让能量门控永远为真/为假
+        mockMvc.perform(put("/api/speech/asr/settings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active_provider\":\"mock-asr\",\"asr_mic_threshold\":1.5}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("ASR_INVALID_SETTINGS"));
+    }
+
+    @Test
     void 状态接口返回上游契约字段() throws Exception {
         // 前端 asrGetStatus() 只读 vad_loaded / ptt_global_ok；键名不是 snake_case 就拿不到。
         // vad_loaded 自 V2 恒 true：VAD 是能量门控（纯 Java），不存在「模型加载失败」

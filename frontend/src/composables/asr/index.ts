@@ -57,6 +57,14 @@ import { isAndroid } from "../../utils/platform";
  * 3. 「在聊天页」由路由判断改为 `runtime.chatMounted`（GameDialog 挂载时置位）。
  */
 
+/** 聊天输入框是否挂载中（V3a 用 runtime.chatMounted 替代上游 route.path 判定）。
+ *
+ * 必须由 GameDialog 的 onMounted / onBeforeUnmount 成对调用——**不能**在 ensureInit()
+ * 里自动置 true：那等于「全局常开」，离开房间后门控还开着，语音会在别的页面被触发。 */
+export function setChatMounted(active: boolean): void {
+  runtime.chatMounted = active;
+}
+
 /** 同步移动端菜单展开状态（§1.5） */
 export function setMobileMenuOpen(open: boolean): void {
   runtime.mobileMenuOpen = open;
