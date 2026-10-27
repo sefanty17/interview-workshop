@@ -8,6 +8,7 @@ import cn.edu.zjut.interview.dto.ChunkCommand;
 import cn.edu.zjut.interview.dto.CreateDocCommand;
 import cn.edu.zjut.interview.dto.KnowledgeDocView;
 import cn.edu.zjut.interview.knowledge.EmbeddingProvider;
+import cn.edu.zjut.interview.knowledge.KnowledgeIndexVersion;
 import cn.edu.zjut.interview.repository.InterviewerKnowledgeRepository;
 import cn.edu.zjut.interview.repository.KnowledgeChunkRepository;
 import cn.edu.zjut.interview.repository.KnowledgeDocRepository;
@@ -43,17 +44,21 @@ public class KnowledgeService {
     private final KnowledgeVectorRepository vectorRepository;
     private final InterviewerKnowledgeRepository mountRepository;
     private final EmbeddingProvider embeddingProvider;
+    /** 写路径的失效通知：改动内容后加版本，检索侧据此重建快照（见 {@link KnowledgeIndexVersion}）。 */
+    private final KnowledgeIndexVersion indexVersion;
 
     public KnowledgeService(KnowledgeDocRepository docRepository,
                             KnowledgeChunkRepository chunkRepository,
                             KnowledgeVectorRepository vectorRepository,
                             InterviewerKnowledgeRepository mountRepository,
-                            EmbeddingProvider embeddingProvider) {
+                            EmbeddingProvider embeddingProvider,
+                            KnowledgeIndexVersion indexVersion) {
         this.docRepository = docRepository;
         this.chunkRepository = chunkRepository;
         this.vectorRepository = vectorRepository;
         this.mountRepository = mountRepository;
         this.embeddingProvider = embeddingProvider;
+        this.indexVersion = indexVersion;
     }
 
     /** 建文档；code 已存在抛 409 —— 幂等交给调用方（脚本按 code upsert）。 */
@@ -120,6 +125,7 @@ public class KnowledgeService {
 
         // 快路径：条数、顺序、指纹全一致且向量都有效 => 一行不动。
         // 这是「同一份 md 跑两次」的常态，省掉全部写操作。
+        // 内容没变就不动检索版本号：否则每次重跑导入脚本都会让检索侧白重建一次索引。
         if (sameFingerprints(existing, targets) && allVectorsValid(existing, vectorByChunkId)) {
             touch(doc);
             return new ChunkSyncResult(existing.size(), existing.size(), 0, 0, 0);
@@ -201,6 +207,8 @@ public class KnowledgeService {
         }
 
         touch(doc);
+        // 片段/向量有过变化 => 通知检索侧快照作废
+        indexVersion.bump();
         return new ChunkSyncResult(incoming.size(), reused, inserted, removed.size(), reembedded);
     }
 
@@ -265,6 +273,8 @@ public class KnowledgeService {
         chunkRepository.deleteByDocId(docId);
         mountRepository.deleteByDocId(docId);
         docRepository.delete(doc);
+        // 文档没了，它的片段必须从检索快照里消失
+        indexVersion.bump();
     }
 
     @Transactional(readOnly = true)
@@ -358,6 +368,8 @@ public class KnowledgeService {
             writeVector(chunk.getId(), docId, chunk.getText());
         }
         touch(doc);
+        // 向量整份换过 => 向量路的候选全变了，快照必须重建
+        indexVersion.bump();
         return chunks.size();
     }
 

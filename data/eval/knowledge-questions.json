@@ -1,0 +1,40 @@
+{
+  "_说明": "岗位知识库检索评测集。positives 是「问法」到「应该命中的文档/小节」；negatives 是明确不该注入知识的闲聊问题。doc 为 knowledge_doc.code，heading 为期望命中的小节标题（用于人工核对，脚本只断言 doc）。",
+  "version": 1,
+  "positives": [
+    { "q": "内存泄漏怎么排查", "job": "java", "doc": "java-jvm-memory", "heading": "内存泄漏的典型形态" },
+    { "q": "堆和栈分别放什么东西", "job": "java", "doc": "java-jvm-memory", "heading": "运行时内存区域划分" },
+    { "q": "强引用、软引用、弱引用有什么区别", "job": "java", "doc": "java-jvm-memory", "heading": "引用类型与可达性" },
+    { "q": "new 出来的对象是先分配在 Eden 区吗", "job": "java", "doc": "java-jvm-memory", "heading": "对象在堆中的分配与流转" },
+    { "q": "G1 和 ZGC 的停顿时间差别大吗", "job": "java", "doc": "java-gc-tuning", "heading": "主流回收器对比" },
+    { "q": "Full GC 太频繁了要怎么调", "job": "java", "doc": "java-gc-tuning", "heading": "关键参数与调优思路" },
+    { "q": "为什么垃圾回收要分代", "job": "java", "doc": "java-gc-tuning", "heading": "分代回收的基本假设" },
+    { "q": "线程池的核心参数有哪些", "job": "java", "doc": "java-concurrency", "heading": "线程池的七个参数" },
+    { "q": "线程池队列满了任务一直堆积怎么办", "job": "java", "doc": "java-concurrency", "heading": "线程池打满怎么排查" },
+    { "q": "synchronized 和 ReentrantLock 有什么区别", "job": "java", "doc": "java-concurrency", "heading": "synchronized 与 Lock 的区别" },
+    { "q": "volatile 能保证原子性吗", "job": "java", "doc": "java-concurrency", "heading": "volatile 与内存可见性" },
+    { "q": "索引在什么情况下会失效", "job": "java", "doc": "java-mysql-index", "heading": "索引失效的常见场景" },
+    { "q": "explain 执行计划里的 type 怎么看", "job": "java", "doc": "java-mysql-index", "heading": "执行计划怎么读" },
+    { "q": "慢 SQL 应该怎么定位和优化", "job": "java", "doc": "java-mysql-index", "heading": "慢查询的定位与优化" },
+    { "q": "缓存穿透和缓存击穿有什么区别", "job": "java", "doc": "java-redis-cache", "heading": "缓存穿透、击穿、雪崩" },
+    { "q": "缓存和数据库的数据怎么保证一致", "job": "java", "doc": "java-redis-cache", "heading": "缓存与数据库的一致性" },
+    { "q": "用 Redis 实现分布式锁要注意什么", "job": "java", "doc": "java-redis-cache", "heading": "分布式锁的正确姿势" },
+    { "q": "@Transactional 注解什么时候会失效", "job": "java", "doc": "java-spring-core", "heading": "事务失效的六种情况" },
+    { "q": "Spring 的循环依赖是怎么解决的", "job": "java", "doc": "java-spring-core", "heading": "循环依赖与三级缓存" },
+    { "q": "事务传播行为 REQUIRED 和 REQUIRES_NEW 的区别", "job": "java", "doc": "java-spring-core", "heading": "事务传播行为" },
+    { "q": "事件循环里微任务和宏任务的执行顺序", "job": "frontend", "doc": "frontend-js-core", "heading": "事件循环与任务队列" },
+    { "q": "闭包会不会造成内存泄漏", "job": "frontend", "doc": "frontend-js-core", "heading": "闭包与作用域链" },
+    { "q": "从输入 URL 到页面渲染发生了什么", "job": "frontend", "doc": "frontend-browser-network", "heading": "从输入 URL 到页面出现" },
+    { "q": "强缓存和协商缓存的区别", "job": "frontend", "doc": "frontend-browser-network", "heading": "HTTP 缓存机制" },
+    { "q": "什么是 BFC，它能解决什么问题", "job": "frontend", "doc": "frontend-css-layout", "heading": "BFC 与层叠上下文" },
+    { "q": "flex 布局里子元素被压扁了怎么办", "job": "frontend", "doc": "frontend-css-layout", "heading": "Flex 布局的常见坑" }
+  ],
+  "negatives": [
+    "今天天气怎么样",
+    "帮我写一首关于春天的诗",
+    "你中午吃饭了吗",
+    "怎么养一只橘猫",
+    "推荐一部好看的科幻电影",
+    "明天会下雨吗"
+  ]
+}

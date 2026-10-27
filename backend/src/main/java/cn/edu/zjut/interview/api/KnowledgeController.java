@@ -3,12 +3,15 @@ package cn.edu.zjut.interview.api;
 import cn.edu.zjut.interview.dto.ChunkCommand;
 import cn.edu.zjut.interview.dto.CreateDocCommand;
 import cn.edu.zjut.interview.dto.KnowledgeDocView;
+import cn.edu.zjut.interview.dto.KnowledgeHit;
 import cn.edu.zjut.interview.knowledge.EmbeddingProvider;
 import cn.edu.zjut.interview.knowledge.HashingEmbeddingProvider;
+import cn.edu.zjut.interview.knowledge.RetrievalService;
 import cn.edu.zjut.interview.repository.KnowledgeChunkRepository;
 import cn.edu.zjut.interview.repository.KnowledgeDocRepository;
 import cn.edu.zjut.interview.repository.KnowledgeVectorRepository;
 import cn.edu.zjut.interview.service.KnowledgeService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,36 +20,41 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 岗位知识库接口（K1）：文档 CRUD、片段覆盖式导入、向量重建、角色挂载。
+ * 岗位知识库接口（K1 写入 + K3 检索）：文档 CRUD、片段覆盖式导入、向量重建、角色挂载、试搜。
  *
  * <p>路径统一挂 {@code /api}（与其它 Controller 一致），这里不再另加一层
  * {@code /knowledge} 前缀，是因为其中两个接口属于角色卡（{@code /api/interviewers/{code}/knowledge}）。
  *
  * <p>错误语义交给 {@link KnowledgeService} 抛 {@code ResponseStatusException}：
- * code 重复 409、文档不存在 404、未知 docCode 400。
+ * code 重复 409、文档不存在 404、未知 docCode 400。检索的 {@code q} 为空同样是 400。
  */
 @RestController
 @RequestMapping("/api")
 public class KnowledgeController {
 
     private final KnowledgeService service;
+    private final RetrievalService retrievalService;
     private final KnowledgeDocRepository docRepository;
     private final KnowledgeChunkRepository chunkRepository;
     private final KnowledgeVectorRepository vectorRepository;
     private final EmbeddingProvider embeddingProvider;
 
     public KnowledgeController(KnowledgeService service,
+                               RetrievalService retrievalService,
                                KnowledgeDocRepository docRepository,
                                KnowledgeChunkRepository chunkRepository,
                                KnowledgeVectorRepository vectorRepository,
                                EmbeddingProvider embeddingProvider) {
         this.service = service;
+        this.retrievalService = retrievalService;
         this.docRepository = docRepository;
         this.chunkRepository = chunkRepository;
         this.vectorRepository = vectorRepository;
@@ -128,6 +136,48 @@ public class KnowledgeController {
         return embeddingProvider instanceof HashingEmbeddingProvider ? "hashing" : "openai";
     }
 
+    /**
+     * 混合检索（试搜）：前端「知识库」页用它验证语料挂对了没有。
+     *
+     * <p>{@code scopeSize} 单独返回，是为了让前端区分「检索没命中」和「压根没挂语料」——
+     * 这两种情况 hits 都是空，但用户的处理动作完全不同。
+     *
+     * <p>阈值（默认 0.30 / 3.0）在这里不开放调参：标定值来自评测脚本，随手改会让「不相关问题不注入」失效。
+     */
+    @GetMapping("/knowledge/search")
+    public SearchView search(@RequestParam(name = "q", required = false) String q,
+                             @RequestParam(name = "interviewerCode", required = false) String interviewerCode,
+                             @RequestParam(name = "jobCode", required = false) String jobCode,
+                             @RequestParam(name = "topK", required = false) Integer topK,
+                             @RequestParam(name = "mode", required = false) String mode,
+                             @RequestParam(name = "minVector", required = false) Double minVector,
+                             @RequestParam(name = "minBm25", required = false) Double minBm25,
+                             @RequestParam(name = "wVector", required = false) Double wVector,
+                             @RequestParam(name = "wBm25", required = false) Double wBm25) {
+        if (q == null || q.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "查询词 q 不能为空");
+        }
+        // topK 缺省/非法用默认 5，超过上限（20）由 withTopK 截断
+        RetrievalService.SearchOptions options =
+                RetrievalService.SearchOptions.defaults().withTopK(topK == null ? 0 : topK);
+        // 阈值可覆盖：前端「试搜」要放开门槛看全部候选，评测脚本也要看未过滤的原始分
+        if (minVector != null || minBm25 != null) {
+            options = options.withThresholds(
+                    minVector == null ? options.minVectorScore() : minVector,
+                    minBm25 == null ? options.minBm25Score() : minBm25);
+        }
+        // 权重可覆盖：评测脚本做两路权重扫描用（默认值由评测集标定，见 RetrievalService 注释）
+        if (wVector != null || wBm25 != null) {
+            options = options.withWeights(
+                    wVector == null ? options.vectorWeight() : wVector,
+                    wBm25 == null ? options.bm25Weight() : wBm25);
+        }
+        RetrievalService.RetrievalMode resolved = RetrievalService.RetrievalMode.parse(mode);
+        List<KnowledgeHit> hits = retrievalService.search(q, interviewerCode, jobCode, options, resolved);
+        return new SearchView(q, resolved.wireName(),
+                retrievalService.scopeSize(interviewerCode, jobCode), options.topK(), hits);
+    }
+
     /** 建文档请求体：字段与 {@link CreateDocCommand} 一一对应。 */
     public record CreateDocRequest(
             String code,
@@ -170,5 +220,19 @@ public class KnowledgeController {
             long docCount,
             long chunkCount,
             long vectorCount) {
+    }
+
+    /**
+     * 检索返回体：回显查询与模式，附上范围大小与命中列表。
+     *
+     * <p>{@code mode} 是归一化之后的模式名（{@code hybrid}/{@code bm25}/{@code vector}），
+     * 传了不认识的串会看到它变成 {@code hybrid}，便于前端自查。
+     */
+    public record SearchView(
+            String query,
+            String mode,
+            int scopeSize,
+            int topK,
+            List<KnowledgeHit> hits) {
     }
 }
