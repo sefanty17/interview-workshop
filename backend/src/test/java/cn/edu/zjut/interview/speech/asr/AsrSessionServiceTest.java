@@ -44,8 +44,9 @@ class AsrSessionServiceTest {
         assertEquals(session.sessionId(), status.sessionId());
         assertEquals("button", status.activeSource());
         assertEquals("qwen-asr", status.activeProvider());
-        // 契约字段在 V1 恒 false：VAD 未接入（vad_loaded），浏览器没有 OS 级全局热键（ptt_global_ok）
-        assertEquals(false, status.vadLoaded());
+        // 契约字段：vad_loaded 自 V2 恒 true（能量门控无模型文件，不存在加载失败）；
+        // ptt_global_ok 恒 false（浏览器没有 OS 级全局热键）
+        assertEquals(true, status.vadLoaded());
         assertEquals(false, status.pttGlobalOk());
         // provider 没配 key
         assertEquals(false, status.providerReady());

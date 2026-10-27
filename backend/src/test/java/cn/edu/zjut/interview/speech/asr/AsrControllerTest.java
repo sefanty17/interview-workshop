@@ -103,10 +103,11 @@ class AsrControllerTest {
 
     @Test
     void 状态接口返回上游契约字段() throws Exception {
-        // 前端 asrGetStatus() 只读 vad_loaded / ptt_global_ok；键名不是 snake_case 就拿不到
+        // 前端 asrGetStatus() 只读 vad_loaded / ptt_global_ok；键名不是 snake_case 就拿不到。
+        // vad_loaded 自 V2 恒 true：VAD 是能量门控（纯 Java），不存在「模型加载失败」
         mockMvc.perform(get("/api/speech/asr/status"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.vad_loaded").value(false))
+                .andExpect(jsonPath("$.vad_loaded").value(true))
                 .andExpect(jsonPath("$.ptt_global_ok").value(false))
                 .andExpect(jsonPath("$.active_provider").value("qwen-asr"))
                 .andExpect(jsonPath("$.session_id").doesNotExist());

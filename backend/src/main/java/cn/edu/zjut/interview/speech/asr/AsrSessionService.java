@@ -58,8 +58,10 @@ public class AsrSessionService {
      * <p>为什么没有 {@code locked}：它恒为 false 且上游没有这个概念，留着只会让人以为
      * 存在「会话结束后短暂锁定的窗口」。
      *
-     * @param vadLoaded      VAD 模型是否加载成功。<b>V1 恒 {@code false}</b>——VAD 在 V2 接入，
-     *                       接完改成真实加载状态（前端据此决定「自动监听」能不能点）
+     * @param vadLoaded      VAD 是否就绪。<b>恒 {@code true}</b>——上游是「Silero 模型加载成功」，
+     *                       本项目是能量门控（{@link EnergyVad}，纯 Java、无模型文件、无原生库），
+     *                       不存在「加载失败」这种状态，所以恒可用。键名与语义不变，
+     *                       前端据此决定「自动监听」能不能点。
      * @param pttGlobalOk    全局快捷键注册是否健康。<b>恒 {@code false}</b>，原因是实现方式不同、
      *                       不是功能没做：上游是桌面端注册操作系统级全局热键，浏览器拿不到
      *                       窗口失焦时的按键，本项目的 PTT 降级为页面内快捷键，根本不存在
@@ -128,8 +130,9 @@ public class AsrSessionService {
         AsrSettings settings = settingsService.load();
         String providerId = settings.getActiveProvider();
         return new AsrStatus(
-                // VAD 未接入（V2 接完后改成真实加载状态）
-                false,
+                // VAD 就绪恒 true：能量门控是无依赖算法（见 AsrStatus#vadLoaded）。
+                // 上游这里是「模型加载成功」，我们是「不存在加载这一步」——恒可用。
+                true,
                 // 浏览器没有 OS 级全局热键，见 AsrStatus#pttGlobalOk
                 false,
                 providerId,
