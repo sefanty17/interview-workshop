@@ -30,6 +30,11 @@ app:
       api-key: ${EMBEDDING_API_KEY:}
       model: bge-m3
       timeout-seconds: 20
+  # 语音线的 ASR 模拟 provider（V1）。没有阿里云百炼 key 时用它跑通前端链路：
+  # 它是注册表里一个显式的 provider，不是偷偷兜底的假数据——选 qwen-asr 而没 key 仍会报错。
+  speech:
+    asr:
+      mock-enabled: true
 
 spring:
   datasource:
