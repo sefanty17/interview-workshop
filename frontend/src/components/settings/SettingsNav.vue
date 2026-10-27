@@ -44,6 +44,16 @@
         <p class="hidden whitespace-nowrap xl:block">通用</p>
       </Button>
       <Button
+        ref="knowledgeBtn"
+        type="nav"
+        class="shrink-0"
+        icon="package"
+        @click="() => switchTab('knowledge', 'knowledgeBtn')"
+        :class="{ active: settingsUi.currentSettingsTab === 'knowledge' }"
+      >
+        <p class="hidden whitespace-nowrap xl:block">知识库</p>
+      </Button>
+      <Button
         ref="backgroundBtn"
         type="nav"
         class="shrink-0"
@@ -152,6 +162,7 @@ type ButtonRef = InstanceType<typeof Button>;
 // 使用更宽松的类型定义
 const characterBtn = ref<ButtonRef | null>(null);
 const textBtn = ref<ButtonRef | null>(null);
+const knowledgeBtn = ref<ButtonRef | null>(null);
 const backgroundBtn = ref<ButtonRef | null>(null);
 const soundBtn = ref<ButtonRef | null>(null);
 const historyBtn = ref<ButtonRef | null>(null);
@@ -169,6 +180,7 @@ const handleIndicatorMove = (currentRefName: string) => {
   const buttonRef = {
     characterBtn,
     textBtn,
+    knowledgeBtn,
     backgroundBtn,
     soundBtn,
     historyBtn,
@@ -242,6 +254,9 @@ const initIndicator = () => {
       break;
     case "text":
       activeButton = textBtn.value;
+      break;
+    case "knowledge":
+      activeButton = knowledgeBtn.value;
       break;
     case "background":
       activeButton = backgroundBtn.value;

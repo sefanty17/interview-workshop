@@ -9,6 +9,7 @@ import cn.edu.zjut.interview.dto.CreateDocCommand;
 import cn.edu.zjut.interview.dto.KnowledgeDocView;
 import cn.edu.zjut.interview.knowledge.EmbeddingProvider;
 import cn.edu.zjut.interview.knowledge.KnowledgeIndexVersion;
+import cn.edu.zjut.interview.knowledge.MarkdownChunker;
 import cn.edu.zjut.interview.repository.InterviewerKnowledgeRepository;
 import cn.edu.zjut.interview.repository.KnowledgeChunkRepository;
 import cn.edu.zjut.interview.repository.KnowledgeDocRepository;
@@ -214,6 +215,56 @@ public class KnowledgeService {
 
     /** 增量同步的明细：total = reused + inserted。 */
     public record ChunkSyncResult(int total, int reused, int inserted, int deleted, int reembedded) {
+    }
+
+    /**
+     * 前端上传一篇 md：文档不存在就建、存在就更新元信息，然后切分并同步片段。
+     *
+     * <p>切分用 {@link MarkdownChunker}，规则与 {@code scripts/import_knowledge.py} 一致 ——
+     * 否则「脚本导的」与「页面上传的」同一篇文档会切出不同粒度。
+     *
+     * <p>为什么让后端切而不是前端切：切分规则要跟着检索/阈值一起演进，
+     * 分散到浏览器里就会出现「旧前端 + 新后端」切出过期粒度。
+     */
+    @Transactional
+    public ChunkSyncResult importMarkdown(String docCode, String title, String category,
+                                          String sourcePath, String markdown) {
+        if (docCode == null || docCode.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "文档 code 不能为空");
+        }
+        KnowledgeDoc doc = docRepository.findByCode(docCode).orElse(null);
+        if (doc == null) {
+            if (title == null || title.isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "新建文档时 title 不能为空");
+            }
+            LocalDateTime now = LocalDateTime.now();
+            doc = new KnowledgeDoc();
+            doc.setCode(docCode);
+            doc.setTitle(title);
+            doc.setCategory(category);
+            doc.setSourcePath(sourcePath);
+            doc.setEnabled(Boolean.TRUE);
+            doc.setCreatedAt(now);
+            doc.setUpdatedAt(now);
+            docRepository.save(doc);
+        } else {
+            // 只更新传了值的字段：前端改标题不该把分类清空
+            if (title != null && !title.isBlank()) {
+                doc.setTitle(title);
+            }
+            if (category != null && !category.isBlank()) {
+                doc.setCategory(category);
+            }
+            if (sourcePath != null && !sourcePath.isBlank()) {
+                doc.setSourcePath(sourcePath);
+            }
+        }
+
+        List<ChunkCommand> commands = new ArrayList<>();
+        for (MarkdownChunker.Chunk chunk : MarkdownChunker.chunk(markdown)) {
+            commands.add(new ChunkCommand(chunk.heading(), chunk.text()));
+        }
+        return syncChunks(docCode, commands);
     }
 
     private static String headingOf(ChunkCommand cmd) {

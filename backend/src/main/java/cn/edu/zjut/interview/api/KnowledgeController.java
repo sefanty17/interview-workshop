@@ -100,6 +100,24 @@ public class KnowledgeController {
                 result.deleted(), result.reembedded());
     }
 
+    /**
+     * 上传一篇 markdown：后端切分后按指纹同步片段（前端「知识库」页的上传入口用它）。
+     *
+     * <p>与 {@code PUT /chunks} 的区别：那个要求调用方自己切好，这个收原文。
+     * 网页端拿不到 Python 脚本，所以切分必须由后端做。
+     */
+    @PostMapping("/knowledge/docs/{code}/markdown")
+    public SyncView uploadMarkdown(@PathVariable String code,
+                                   @RequestBody(required = false) MarkdownRequest request) {
+        if (request == null || request.markdown() == null || request.markdown().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "markdown 内容不能为空");
+        }
+        KnowledgeService.ChunkSyncResult result = service.importMarkdown(
+                code, request.title(), request.category(), request.sourcePath(), request.markdown());
+        return new SyncView(result.total(), result.reused(), result.inserted(),
+                result.deleted(), result.reembedded());
+    }
+
     @PostMapping("/knowledge/docs/{code}/reindex")
     public CountView reindex(@PathVariable String code) {
         return new CountView(service.reindexDoc(code));
@@ -193,6 +211,10 @@ public class KnowledgeController {
 
     /** 片段列表请求体：用对象包一层，将来加切分参数时不用改 body 形状。 */
     public record ChunksRequest(List<ChunkItem> chunks) {
+    }
+
+    /** 上传 markdown 的请求体：markdown 是原文，切分由后端做。 */
+    public record MarkdownRequest(String title, String category, String sourcePath, String markdown) {
     }
 
     public record DocCodesRequest(List<String> docCodes) {

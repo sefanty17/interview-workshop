@@ -186,6 +186,10 @@
 
               <!-- 关系（AI 角色视角）：写 interviewer_relation，独立保存 -->
               <RelationEditor v-if="activeTab === 'basic' && props.roleId" :interviewer-code="props.roleId" />
+              <RoleKnowledgeEditor
+                v-if="activeTab === 'basic' && props.roleId"
+                :interviewer-code="props.roleId"
+              />
             </div>
 
             <!-- GSV 六情绪参考语音：填全的分类按情绪切换参考音色，未填全的
@@ -382,6 +386,7 @@ import VoicePreview from "../character/VoicePreview.vue";
 import DialogueExamplesEditor from "../character/DialogueExamplesEditor.vue";
 import TouchRegionsEditor from "../character/TouchRegionsEditor.vue";
 import RelationEditor from "./character-info/RelationEditor.vue";
+import RoleKnowledgeEditor from "./character-info/RoleKnowledgeEditor.vue";
 
 const props = defineProps<{
   /** 角色 code（原版是数字 roleId，本项目用 InterviewerCode） */

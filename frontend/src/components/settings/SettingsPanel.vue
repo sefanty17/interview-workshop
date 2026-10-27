@@ -41,6 +41,7 @@ import {
   SettingsBackground,
   SettingsCharacter,
   SettingsHistory,
+  SettingsKnowledge,
   SettingsLog,
   SettingsSave,
   SettingsSchedule,
@@ -135,6 +136,7 @@ const TABS = [
   "character",
   "adventure",
   "text",
+  "knowledge",
   "background",
   "sound",
   "history",
@@ -151,6 +153,7 @@ const TABS = [
 const tabComponents: Record<string, Component> = {
   save: SettingsSave,
   text: SettingsText,
+  knowledge: SettingsKnowledge,
   sound: SettingsSound,
   advance: SettingsAdvance,
   adventure: SettingsAdventure,

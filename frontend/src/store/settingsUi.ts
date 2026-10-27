@@ -1,10 +1,11 @@
 import { reactive } from "vue";
 
-/** 设置面板的 10 个标签页（原版 uiStore.currentSettingsTab 去掉 plugins） */
+/** 设置面板的 11 个标签页（原版 uiStore.currentSettingsTab 去掉 plugins，本项目扩展 knowledge） */
 export type SettingsTab =
   | "character"
   | "adventure"
   | "text"
+  | "knowledge"
   | "background"
   | "sound"
   | "history"

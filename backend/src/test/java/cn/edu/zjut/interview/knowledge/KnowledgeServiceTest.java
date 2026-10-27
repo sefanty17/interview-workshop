@@ -277,4 +277,39 @@ class KnowledgeServiceTest {
                 .map(chunk -> chunk.getId())
                 .toList();
     }
+
+    /** K5 的上传入口：文档不存在就建，切分规则用 MarkdownChunker。 */
+    @Test
+    void 上传markdown时自动建文档并切分() {
+        String code = PREFIX + "upload";
+        String md = """
+                # 索引与事务
+
+                开篇一句引言，说明这篇讲什么。
+
+                ## 索引失效
+
+                隐式类型转换会让索引失效，比如字符串列传了数字。
+
+                ## 事务隔离
+
+                隔离级别有四级，MySQL 默认可重复读。
+                """;
+
+        KnowledgeService.ChunkSyncResult result = service.importMarkdown(
+                code, "索引与事务", "java", "upload/index.md", md);
+
+        assertEquals(3, result.total(), "引言 + 两个二级小节");
+        assertEquals(3, result.inserted());
+        KnowledgeDocView view = viewOf(code);
+        assertEquals("索引与事务", view.title());
+        assertEquals("java", view.category());
+        assertEquals(3, view.vectorCount());
+
+        // 再传一次同样的内容：必须整篇复用，一条都不重算
+        KnowledgeService.ChunkSyncResult again = service.importMarkdown(
+                code, "索引与事务", "java", "upload/index.md", md);
+        assertEquals(3, again.reused());
+        assertEquals(0, again.inserted());
+    }
 }

@@ -1,5 +1,6 @@
 export { default as SettingsSave } from "./SettingsSave.vue";
 export { default as SettingsText } from "./SettingsText.vue";
+export { default as SettingsKnowledge } from "./SettingsKnowledge.vue";
 export { default as SettingsSound } from "./SettingsSound.vue";
 export { default as SettingsAdvance } from "./SettingsAdvance.vue";
 export { default as SettingsHistory } from "./SettingsHistory.vue";
