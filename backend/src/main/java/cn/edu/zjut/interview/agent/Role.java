@@ -46,18 +46,23 @@ public enum Role {
         return doc;
     }
 
-    /** 本角色能用的工具，封闭集合。 */
+    /**
+     * 本角色能用的工具，封闭集合。
+     *
+     * <p>{@code search_knowledge}（K7 扩展）四角色都给：它只读岗位语料、不碰文件，
+     * 而四个角色写的东西都与技术事实有关，能查就该能查。
+     */
     public List<String> tools() {
         return switch (this) {
             case WRITER, DEMANDER -> List.of(
-                    "list_files", "read_file", "write_file", "edit_file");
+                    "list_files", "read_file", "write_file", "edit_file", "search_knowledge");
             // 落盘改章节时要能整份删掉一章，也要能自检格式
             case TRANSFORMER -> List.of(
                     "list_files", "read_file", "write_file", "edit_file",
-                    "delete_file", "validate_script");
+                    "delete_file", "validate_script", "search_knowledge");
             // 校验只读：连 write_file 都不给，"这一轮一个字都没写"才是真的
             case OPTIMIZER -> List.of(
-                    "list_files", "read_file", "validate_script");
+                    "list_files", "read_file", "validate_script", "search_knowledge");
         };
     }
 

@@ -84,7 +84,8 @@ class SkillAgentRouterInputTest {
                 (AgentConversationRepository) null, (AgentMessageRepository) null,
                 (UserSettingRepository) null, (InterviewScriptRepository) null,
                 (InterviewChapterRepository) null, (ConfigService) null, new ObjectMapper(),
-                null, (SkillAgentLlmClient) null, (ChapterLander) null, ".");
+                null, (SkillAgentLlmClient) null, (ChapterLander) null,
+                (cn.edu.zjut.interview.knowledge.RetrievalService) null, ".");
         return service.renderCoreRunChat(kind, "01", 0, 1, "这一项={} 第 {}/{} 项 对象=「{}」");
     }
 

@@ -1,6 +1,8 @@
 package cn.edu.zjut.interview.agent;
 
 import cn.edu.zjut.interview.domain.InterviewChapter;
+import cn.edu.zjut.interview.dto.ChunkCommand;
+import cn.edu.zjut.interview.dto.CreateDocCommand;
 import cn.edu.zjut.interview.domain.InterviewScript;
 import cn.edu.zjut.interview.repository.InterviewChapterRepository;
 import cn.edu.zjut.interview.repository.InterviewScriptRepository;
@@ -46,6 +48,12 @@ class SkillAgentToolsTest {
     @Autowired
     private ChapterLander lander;
 
+    @Autowired
+    private cn.edu.zjut.interview.knowledge.RetrievalService retrievalService;
+
+    @Autowired
+    private cn.edu.zjut.interview.service.KnowledgeService knowledgeService;
+
     @TempDir
     Path sandbox;
 
@@ -67,14 +75,14 @@ class SkillAgentToolsTest {
     private SkillAgentTools tools() {
         SkillAgentFileTools fileTools = new SkillAgentFileTools(sandbox, false);
         return new SkillAgentTools(fileTools, sandbox.resolve("skills"),
-                scriptRepository, chapterRepository, null, lander);
+                scriptRepository, chapterRepository, null, lander, retrievalService);
     }
 
     /** validator 注入版（validate_script 用）。 */
     private SkillAgentTools toolsWithValidator(cn.edu.zjut.interview.editor.ScriptValidator validator) {
         SkillAgentFileTools fileTools = new SkillAgentFileTools(sandbox, false);
         return new SkillAgentTools(fileTools, sandbox.resolve("skills"),
-                scriptRepository, chapterRepository, validator, lander);
+                scriptRepository, chapterRepository, validator, lander, retrievalService);
     }
 
     private static SkillAgentTools.RunContext runCtx(String boundKey) {
@@ -94,7 +102,7 @@ class SkillAgentToolsTest {
      */
     private static final List<String> ALL = List.of(
             "list_skills", "read_skill", "validate_script",
-            "list_files", "read_file", "write_file", "edit_file", "delete_file");
+            "list_files", "read_file", "write_file", "edit_file", "delete_file", "search_knowledge");
 
     private SkillAgentTools.ToolResult call(SkillAgentTools tools, String name, String argsJson) {
         return tools.execute(runCtx(null), WRITE_SCOPE, ALL, name, readTree(argsJson));
@@ -247,6 +255,68 @@ class SkillAgentToolsTest {
         SkillAgentTools.ToolResult command = call(tools, "execute_command", "{\"command\":\"dir\"}");
         assertFalse(command.ok());
         assertTrue(command.error().contains("execute_command 未启用"));
+    }
+
+    // ───────────────────────── K7：search_knowledge ─────────────────────────
+
+    /**
+     * 知识库里有内容时能查到原文，且带上文档 code。
+     *
+     * <p>这条用例同时守住 K4 与 K7 的口径一致性：面试对话预注入用的就是这条检索链路，
+     * 助手主动查到的必须也是同一批片段，否则同一个问题两边会给出互相矛盾的说法。
+     */
+    @Test
+    void searchKnowledge返回知识库原文() {
+        String code = "k7-tool-doc";
+        knowledgeService.createDoc(new CreateDocCommand(code, "JVM 内存与垃圾回收", "java", null, null));
+        try {
+            knowledgeService.syncChunks(code, List.of(new ChunkCommand("第2章 > 2.2 内存泄漏排查",
+                    "内存泄漏怎么定位：先用 jmap 抓堆转储，再用 MAT 看持有链，静态集合没清理是最常见的原因")));
+
+            SkillAgentTools.ToolResult result = call(tools(), "search_knowledge",
+                    "{\"query\":\"内存泄漏怎么定位\",\"jobCode\":\"java\"}");
+
+            assertTrue(result.ok(), "检索失败：" + result.output());
+            assertTrue(result.output().contains("内存泄漏怎么定位：先用 jmap 抓堆转储"), result.output());
+            assertTrue(result.output().contains(code), "结果里要带文档 code，模型才好二次引用：" + result.output());
+            assertTrue(result.output().contains("2.2 内存泄漏排查"), "要带小节名：" + result.output());
+        } finally {
+            knowledgeService.deleteDoc(code);
+        }
+    }
+
+    /** 查不到时是「成功的空结果」，不是失败：报失败模型会以为工具坏了，转去重试而不是如实说查不到。 */
+    @Test
+    void searchKnowledge查不到时返回空结果而非失败() {
+        SkillAgentTools.ToolResult result = call(tools(), "search_knowledge", "{\"query\":\"今天天气怎么样\"}");
+        assertTrue(result.ok(), "不该报错：" + result.output());
+        assertTrue(result.output().contains("没有检索到"), result.output());
+    }
+
+    /** 缺 query 直接拒：空查询会把整个语料当候选，白烧上下文。 */
+    @Test
+    void searchKnowledge缺query时拒绝() {
+        SkillAgentTools.ToolResult result = call(tools(), "search_knowledge", "{}");
+        assertFalse(result.ok());
+        assertTrue(result.error().contains("query"), result.error());
+    }
+
+    /**
+     * 四个角色的白名单都要有这个工具，且它的定义真的被发给了模型。
+     *
+     * <p>只改白名单不改定义，模型根本不知道有这个工具（{@code toolDefinitions} 按 allowed 过滤）；
+     * 只改定义不改白名单，模型调了会被闸门拒。两头都要在。
+     */
+    @Test
+    void 四个角色都能用searchKnowledge() {
+        SkillAgentTools tools = tools();
+        for (Role role : Role.values()) {
+            assertTrue(role.tools().contains("search_knowledge"), role + " 缺 search_knowledge：" + role.tools());
+            assertTrue(tools.toolDefinitions(role.tools()).stream()
+                            .anyMatch(def -> "search_knowledge".equals(def.name())),
+                    role + " 的定义没下发：" + tools.toolDefinitions(role.tools()).stream()
+                            .map(SkillAgentLlmClient.ToolDef::name).toList());
+        }
     }
 
     // ───────────────────────── 辅助 ─────────────────────────

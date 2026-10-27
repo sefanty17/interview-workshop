@@ -5,6 +5,7 @@ import cn.edu.zjut.interview.domain.AgentConversation;
 import cn.edu.zjut.interview.domain.AgentMessage;
 import cn.edu.zjut.interview.domain.InterviewScript;
 import cn.edu.zjut.interview.editor.ScriptValidator;
+import cn.edu.zjut.interview.knowledge.RetrievalService;
 import cn.edu.zjut.interview.llm.LlmOptions;
 import cn.edu.zjut.interview.repository.AgentConversationRepository;
 import cn.edu.zjut.interview.repository.AgentMessageRepository;
@@ -170,6 +171,8 @@ public class SkillAgentService {
     private final SkillAgentRouter router;
     /** 落盘桥接：章节 YAML → {@code interview_chapter} 并回自检。 */
     private final ChapterLander lander;
+    /** 岗位知识库检索（K7 的 search_knowledge 工具用）。 */
+    private final RetrievalService retrievalService;
 
     /** 项目数据根目录（原版 {@code data_dir::get_data_dir()}，本项目即 {@code game_data/} 的上一级）。 */
     private final Path dataDir;
@@ -208,6 +211,7 @@ public class SkillAgentService {
                               ScriptValidator validator,
                               SkillAgentLlmClient llmClient,
                               ChapterLander lander,
+                              RetrievalService retrievalService,
                               @Value("${app.characters-dir}") String charactersDir) {
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
@@ -219,6 +223,7 @@ public class SkillAgentService {
         this.validator = validator;
         this.llmClient = llmClient;
         this.lander = lander;
+        this.retrievalService = retrievalService;
         this.router = new SkillAgentRouter(llmClient, configs, objectMapper);
         // app.characters-dir 指向 game_data/characters，往上一级即 game_data/；
         // 沙箱根（原版 data_dir）就是 game_data/：剧本包在 game_data/scripts/<key>，
@@ -620,7 +625,7 @@ public class SkillAgentService {
 
         SkillAgentFileTools fileTools = new SkillAgentFileTools(sandboxDir, config.isAllowAnyPath());
         SkillAgentTools tools = new SkillAgentTools(fileTools, skillsDir, scriptRepository,
-                chapterRepository, validator, lander);
+                chapterRepository, validator, lander, retrievalService);
         SkillAgentTools.RunContext runContext =
                 new SkillAgentTools.RunContext(conversation.getScriptKey(), existingScriptKeys);
 

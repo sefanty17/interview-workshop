@@ -187,14 +187,21 @@ public class SkillAgentRouter {
         return DICTATE_TOOLS;
     }
 
-    /** 只读两项（对齐 {@code role::CHAT_TOOLS}）。 */
-    private static final List<String> CHAT_TOOLS = List.of("list_files", "read_file");
+    /**
+     * 只读两项（对齐 {@code role::CHAT_TOOLS}）。
+     *
+     * <p>{@code search_knowledge} 是 K7 扩展，原版没有：闲聊也要能回答「这个知识点是什么」，
+     * 而它只读，放进来不会让「这一轮不动文件」的约束松掉。
+     */
+    private static final List<String> CHAT_TOOLS = List.of("list_files", "read_file", "search_knowledge");
 
     /** 只读 + 校验（对齐 {@code role::DICTATE_TOOLS}）。 */
-    private static final List<String> DICTATE_TOOLS = List.of("list_files", "read_file", "validate_script");
+    private static final List<String> DICTATE_TOOLS = List.of("list_files", "read_file", "validate_script",
+            "search_knowledge");
 
     /** 只写 {@code .agent/} 稿子（对齐 {@code role::DRAFT_TOOLS}）。 */
-    private static final List<String> DRAFT_TOOLS = List.of("list_files", "read_file", "write_file", "edit_file");
+    private static final List<String> DRAFT_TOOLS = List.of("list_files", "read_file", "write_file", "edit_file",
+            "search_knowledge");
 
     // ───────────────────────── 计划 ─────────────────────────
 

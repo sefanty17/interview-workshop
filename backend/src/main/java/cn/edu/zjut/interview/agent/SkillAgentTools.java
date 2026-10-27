@@ -2,9 +2,11 @@ package cn.edu.zjut.interview.agent;
 
 import cn.edu.zjut.interview.domain.InterviewChapter;
 import cn.edu.zjut.interview.domain.InterviewScript;
+import cn.edu.zjut.interview.dto.KnowledgeHit;
 import cn.edu.zjut.interview.editor.Diagnostic;
 import cn.edu.zjut.interview.editor.ScriptValidator;
 import cn.edu.zjut.interview.editor.Severity;
+import cn.edu.zjut.interview.knowledge.RetrievalService;
 import cn.edu.zjut.interview.repository.InterviewChapterRepository;
 import cn.edu.zjut.interview.repository.InterviewScriptRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -26,6 +28,10 @@ import java.util.Set;
  * validate_script / list_files / read_file / write_file / edit_file / delete_file。
  * {@code execute_command}（tools.rs:192）本批<b>不实现</b>——前置依赖与授权未定，
  * 已确认暂缓；分发处留显式分支返回拒绝信息（见 {@link #execute}），不许偷偷实现。
+ *
+ * <p>第 9 个 {@code search_knowledge} 是<b>本项目扩展</b>（上游没有知识库）：
+ * 写章节/题目之前按需查岗位语料，把事实锚在知识库上而不是模型的记忆里。
+ * 它只读、不碰文件，所以四角色都给。
  *
  * <p>三道闸门（顺序对齐原版）：
  * <ol>
@@ -56,19 +62,23 @@ public class SkillAgentTools {
     private final ScriptValidator validator;
     /** 落盘桥接：章节 YAML 写完顺手落进 {@code interview_chapter} 并回一段自检。 */
     private final ChapterLander lander;
+    /** 岗位知识库检索（K7 扩展工具用）；为 null 时该工具报明确不可用，不影响其余八个。 */
+    private final RetrievalService retrievalService;
 
     public SkillAgentTools(SkillAgentFileTools fileTools,
                            Path skillsDir,
                            InterviewScriptRepository scriptRepository,
                            InterviewChapterRepository chapterRepository,
                            ScriptValidator validator,
-                           ChapterLander lander) {
+                           ChapterLander lander,
+                           RetrievalService retrievalService) {
         this.fileTools = fileTools;
         this.skillsDir = skillsDir;
         this.scriptRepository = scriptRepository;
         this.chapterRepository = chapterRepository;
         this.validator = validator;
         this.lander = lander;
+        this.retrievalService = retrievalService;
     }
 
     // ───────────────────────── 类型 ─────────────────────────
@@ -151,7 +161,17 @@ public class SkillAgentTools {
                         "删除一个文件（整份）。只能删文件，不能删目录。",
                         SkillAgentLlmClient.ToolDef.schema(
                                 java.util.Map.of("path", prop("string", "要删除的文件路径")),
-                                "path")));
+                                "path")),
+                new SkillAgentLlmClient.ToolDef("search_knowledge",
+                        "在岗位知识库里检索技术知识点原文。写题目、写章节里涉及具体技术细节的段落之前用它核对事实"
+                                + "（参数含义、版本行为、常见坑），不要凭记忆编。返回的是语料原文片段，不是你的推测；"
+                                + "查不到就如实说明查不到，不要编一个补上。",
+                        SkillAgentLlmClient.ToolDef.schema(
+                                java.util.Map.of("query", prop("string",
+                                                "要查什么，用自然语言写，例如「G1 和 ZGC 的停顿差异」「线程池队列满了怎么办」"),
+                                        "jobCode", prop("string", "岗位限定：java 或 frontend；省略表示全库检索"),
+                                        "topK", prop("integer", "返回几条片段，默认 3，最多 8")),
+                                "query")));
         return all.stream().filter(t -> allowed.contains(t.name())).toList();
     }
 
@@ -262,6 +282,7 @@ public class SkillAgentTools {
                 case "write_file" -> writeFile(run, item, args);
                 case "edit_file" -> editFile(run, item, args);
                 case "delete_file" -> deleteFile(run, item, args);
+                case "search_knowledge" -> searchKnowledge(args);
                 default -> ToolResult.failure("未知工具: " + name);
             };
         } catch (Exception e) {
@@ -297,6 +318,64 @@ public class SkillAgentTools {
         return ToolResult.success("Reading: " + loaded.name()
                 + "\nBase directory: " + loaded.baseDirectory()
                 + "\n\n" + loaded.content() + "\n\nSkill loaded: " + loaded.name());
+    }
+
+    // ───────────────────────── search_knowledge（K7 扩展） ─────────────────────────
+
+    /** 单条片段进上下文的字数上限：语料片段本来就不超过 900 字，这里只是防外部导入的超长片段。 */
+    private static final int MAX_SNIPPET_CHARS = 900;
+    /** 单次最多返回几条：模型自己传大了也不许刷屏，5 条以外基本只是噪声。 */
+    private static final int MAX_KNOWLEDGE_TOP_K = 8;
+
+    /**
+     * 按需检索岗位知识库。
+     *
+     * <p>用的是面试对话同一条检索链路（混合 RRF + 默认阈值），所以「面试官预先注入的内容」
+     * 和「助手主动查到的内容」口径一致，两边不会互相矛盾。
+     * 查不到返回 {@code ok=true} 的空结果说明 —— 空的检索结果不是错误，
+     * 报成失败会让模型以为工具坏了、改去重试而不是如实说查不到。
+     */
+    private ToolResult searchKnowledge(JsonNode args) {
+        String query = textArg(args, "query").trim();
+        if (query.isEmpty()) {
+            return ToolResult.failure("缺少 query 参数：要查什么？用自然语言写就行。");
+        }
+        if (retrievalService == null) {
+            return ToolResult.failure("知识库检索不可用（当前进程没有装配检索服务）。");
+        }
+        String jobCode = textArg(args, "jobCode").trim();
+        int topK = args == null || !args.hasNonNull("topK") ? 3 : args.path("topK").asInt(3);
+        if (topK <= 0) {
+            topK = 3;
+        }
+        topK = Math.min(topK, MAX_KNOWLEDGE_TOP_K);
+
+        List<KnowledgeHit> hits = retrievalService.search(query, null,
+                jobCode.isEmpty() ? null : jobCode,
+                RetrievalService.SearchOptions.defaults().withTopK(topK),
+                RetrievalService.RetrievalMode.HYBRID);
+        String scopeNote = jobCode.isEmpty() ? "" : "（岗位：" + jobCode + "）";
+        if (hits.isEmpty()) {
+            return ToolResult.success("知识库里没有检索到「" + query + "」相关的内容" + scopeNote
+                    + "。换个说法再查一次，或者如实告诉用户这一点你查不到——不要编。");
+        }
+
+        StringBuilder out = new StringBuilder("[知识库] 「").append(query).append("」命中 ")
+                .append(hits.size()).append(" 条").append(scopeNote).append("：\n");
+        int index = 1;
+        for (KnowledgeHit hit : hits) {
+            String snippet = hit.text() == null ? "" : hit.text().strip();
+            if (snippet.length() > MAX_SNIPPET_CHARS) {
+                snippet = snippet.substring(0, MAX_SNIPPET_CHARS) + "…";
+            }
+            out.append("\n[").append(index++).append("] ")
+                    .append(hit.docTitle() == null ? hit.docCode() : hit.docTitle());
+            if (hit.heading() != null && !hit.heading().isBlank()) {
+                out.append(" > ").append(hit.heading());
+            }
+            out.append("（").append(hit.docCode()).append("）\n").append(snippet).append('\n');
+        }
+        return ToolResult.success(out.toString().stripTrailing());
     }
 
     // ───────────────────────── validate_script ─────────────────────────
