@@ -1,0 +1,25 @@
+[ {
+  "mark" : "Done",
+  "kind" : "outline",
+  "target" : "01,02,03",
+  "registeredAt" : 1793034854641676800,
+  "existedAtRegister" : false
+}, {
+  "mark" : "Done",
+  "kind" : "draft_chapter",
+  "target" : "01",
+  "registeredAt" : 1793034854641676800,
+  "existedAtRegister" : false
+}, {
+  "mark" : "Done",
+  "kind" : "draft_chapter",
+  "target" : "02",
+  "registeredAt" : 1793034854641676800,
+  "existedAtRegister" : false
+}, {
+  "mark" : "Done",
+  "kind" : "draft_chapter",
+  "target" : "03",
+  "registeredAt" : 1793034854641676800,
+  "existedAtRegister" : false
+} ]

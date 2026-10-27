@@ -20,6 +20,16 @@ app:
     temperature: 1.0
     max-tokens: 800
     timeout-seconds: 60
+  # 岗位知识库的向量化（K1）：hashing 是本地假向量，零依赖、断网可演示；
+  # openai 指任意 OpenAI 兼容 /embeddings，key 同样只从环境变量读。
+  knowledge:
+    embedding:
+      # hashing = 本地假向量（零依赖、断网可用、语义弱）；openai = 任意 OpenAI 兼容 /embeddings
+      provider: hashing
+      base-url: ${EMBEDDING_BASE_URL:}
+      api-key: ${EMBEDDING_API_KEY:}
+      model: bge-m3
+      timeout-seconds: 20
 
 spring:
   datasource:
