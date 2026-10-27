@@ -69,8 +69,20 @@ public class SkillAgentService {
 
     private static final Logger log = LoggerFactory.getLogger(SkillAgentService.class);
 
-    /** SSE 连接的兜底超时，与 {@code ScriptPlayController} 同规格。 */
-    private static final long SSE_TIMEOUT_MILLIS = 180_000L;
+    /**
+     * SSE 连接的兜底超时。
+     *
+     * <p><b>剧本助手这一处必须是不超时（0）</b>，不能跟 {@code ScriptPlayController} /
+     * {@code ChatService} 一样用 180s：一轮会路由出多项串行任务（大纲 → 各章正文 → 各章转 YAML），
+     * 实测「随便写 3 章直接落盘」= 7 项、约 40s/项，总时长必然超过任何固定超时。
+     * 2026-10-27 实测：180s 时第 5/7 项刚开口，Spring 就抛 AsyncRequestTimeoutException 把流
+     * 强制 complete，后续 send 全部 IllegalStateException，整轮崩在半路（三章正文写完、
+     * YAML 一个没落）。
+     *
+     * <p>0 = 不过期，连接由正常 complete / 出错 / 客户端断开收尾；sendQuietly 已挡住
+     * 「流已关闭仍要发」的二次异常。
+     */
+    private static final long SSE_TIMEOUT_MILLIS = 0L;
 
     /** 技能 SKILL.md 的大小上限（对齐 {@code skills.rs::MAX_SKILL_BYTES}）。 */
     private static final long MAX_SKILL_BYTES = 512 * 1024L;
