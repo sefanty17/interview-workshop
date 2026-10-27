@@ -154,12 +154,15 @@ def main():
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--calibrate", action="store_true", help="额外跑阈值标定")
     ap.add_argument("--sweep", action="store_true", help="额外跑两路权重扫描")
+    ap.add_argument("--questions", default=str(QUESTIONS),
+                    help="评测集文件；K6 留出集用 data/eval/holdout-questions.json")
     args = ap.parse_args()
 
-    spec = json.loads(QUESTIONS.read_text(encoding="utf-8"))
+    spec = json.loads(Path(args.questions).read_text(encoding="utf-8"))
     positives, negatives = spec["positives"], spec["negatives"]
 
-    print(f"评测集：正样本 {len(positives)} 条，负样本 {len(negatives)} 条，目标 {args.api}")
+    print(f"评测集：{Path(args.questions).name}"
+          f"（正样本 {len(positives)} 条，负样本 {len(negatives)} 条），目标 {args.api}")
     results = [evaluate(args.api, positives, mode, args.top_k)
                for mode in ("bm25", "vector", "hybrid")]
 

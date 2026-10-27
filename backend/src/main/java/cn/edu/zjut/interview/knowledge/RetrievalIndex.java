@@ -16,14 +16,19 @@ import java.util.Map;
  * <ul>
  *   <li>{@code termFreqs} 是<b>单条片段内</b>的词频；</li>
  *   <li>{@code docFreq} 是<b>全库</b>范围内出现过该词项的片段数；</li>
- *   <li>{@code avgLength} 按词项总数算，不是字符数，也不含标题。</li>
+ *   <li>{@code avgLength} 按词项总数算，不是字符数；标题与假设问题都计入（它们同样进词表）。</li>
  * </ul>
  */
 public final class RetrievalIndex {
 
-    /** 一条片段在索引里的样子：检索结果只需要这些字段，不把实体暴露出去。 */
+    /**
+     * 一条片段在索引里的样子：检索结果只需要这些字段，不把实体暴露出去。
+     *
+     * <p>{@code hype} 是 K6 的假设问题，<b>只进词表与向量，不进检索结果</b>
+     * （结果里的 text 要原样拼提示词，掺进模型生成的问题会让面试官念错东西）。
+     */
     public record Doc(long chunkId, long docId, String docCode, String docTitle,
-                      String heading, String text) {
+                      String heading, String text, String hype) {
     }
 
     private final List<Doc> docs;
@@ -51,10 +56,13 @@ public final class RetrievalIndex {
         Map<String, Integer> df = new LinkedHashMap<>();
         long totalTerms = 0;
         for (Doc doc : docCopy) {
-            // 标题也进词表：「3.2 内存泄漏排查」这种面包屑是很有用的检索信号，
-            // 但向量路由只嵌入正文（写入时就是这么算的），两路口径的差异在这里是有意的
-            List<String> docTerms = List.copyOf(ChineseTokenizer.tokenize(
-                    (doc.heading() == null ? "" : doc.heading() + " ") + doc.text()));
+            // 标题也进词表：「3.2 内存泄漏排查」这种面包屑是很有用的检索信号。
+            // 假设问题（K6）同样进词表：它的存在意义就是覆盖「用户自己的说法」，
+            // 不参与打分的话 HyPE 等于没做。
+            String indexText = (doc.heading() == null ? "" : doc.heading() + " ")
+                    + doc.text()
+                    + (doc.hype() == null || doc.hype().isBlank() ? "" : " " + doc.hype());
+            List<String> docTerms = List.copyOf(ChineseTokenizer.tokenize(indexText));
             termCopy.add(docTerms);
             totalTerms += docTerms.size();
 

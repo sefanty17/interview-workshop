@@ -309,3 +309,10 @@ CREATE TABLE IF NOT EXISTS interviewer_knowledge (
   doc_id           BIGINT      NOT NULL,
   CONSTRAINT uk_interviewer_knowledge UNIQUE (interviewer_code, doc_id)
 );
+
+-- ============ K6 · 片段的「假设问题」（HyPE）============
+-- 为什么单独一列而不是拼进 text：正文是真相源，假设问题是模型生成的辅助索引，
+-- 删掉它们不该影响正文；重建索引（换生成模型）时只换这一列就行。
+-- 用 ALTER ... IF NOT EXISTS 而不是改上面的 CREATE TABLE：这个文件每次启动都执行，
+-- 而老库的 knowledge_chunk 已经建好了，改 CREATE 不会生效。
+ALTER TABLE knowledge_chunk ADD COLUMN IF NOT EXISTS hype_questions CLOB;

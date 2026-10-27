@@ -271,6 +271,42 @@ class KnowledgeServiceTest {
         assertEquals(2, view.vectorCount(), "删片段必须连向量一起删");
     }
 
+    /**
+     * K6. 补假设问题：指纹把假设问题也算进去，那一条必须重插并重算向量，
+     * 没动的那条原样复用；带假设问题的同一份内容重放时零重建。
+     */
+    @Test
+    void 补假设问题只重算那一条且重放时零重建() {
+        String code = PREFIX + "hype-sync";
+        service.createDoc(new CreateDocCommand(code, "假设问题", "java", null, null));
+        service.syncChunks(code, List.of(
+                new ChunkCommand("第1章", "JVM 内存分为堆和栈"),
+                new ChunkCommand("第1章 > 1.1", "垃圾回收器有 G1 和 ZGC")));
+        List<Long> idsBefore = chunkIds(code);
+
+        List<ChunkCommand> withHype = List.of(
+                new ChunkCommand("第1章", "JVM 内存分为堆和栈", "堆和栈分别放什么？"),
+                new ChunkCommand("第1章 > 1.1", "垃圾回收器有 G1 和 ZGC"));
+        KnowledgeService.ChunkSyncResult result = service.syncChunks(code, withHype);
+
+        assertEquals(2, result.total());
+        assertEquals(1, result.reused());
+        assertEquals(1, result.inserted());
+        assertEquals(1, result.deleted());
+        List<Long> idsAfter = chunkIds(code);
+        assertTrue(idsAfter.contains(idsBefore.get(1)), "没加假设问题的那条必须复用");
+        assertFalse(idsAfter.contains(idsBefore.get(0)), "加了假设问题的那条指纹变了，必须是新行");
+        KnowledgeDocView view = viewOf(code);
+        assertEquals(2, view.chunkCount());
+        assertEquals(2, view.vectorCount(), "旧向量必须随旧片段一起删掉，不能留两行");
+
+        // 同一份（带假设问题）再写一次：指纹稳定，零重建
+        KnowledgeService.ChunkSyncResult replay = service.syncChunks(code, withHype);
+        assertEquals(2, replay.reused());
+        assertEquals(0, replay.reembedded());
+        assertEquals(idsAfter, chunkIds(code));
+    }
+
     private List<Long> chunkIds(String docCode) {
         Long docId = docRepository.findByCode(docCode).orElseThrow().getId();
         return chunkRepository.findByDocIdOrderByChunkIndexAsc(docId).stream()

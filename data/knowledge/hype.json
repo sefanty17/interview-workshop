@@ -1,0 +1,163 @@
+{
+  "_说明": "HyPE 种子问题（K6）。键是 `文档code|小节名`，值是「这段话能回答的问题」。有可用的 LLM key 时，scripts/generate_hype.py --llm 可以自动生成，不必手写；这里先手写一份，让检索评测能跑通。问法刻意与标题不同——HyPE 的作用就是把「用户自己的说法」提前写进索引。",
+  "java-jvm-memory|运行时内存区域划分": [
+    "Java 运行时内存分成哪几块？",
+    "堆和栈分别放什么东西？"
+  ],
+  "java-jvm-memory|对象在堆中的分配与流转": [
+    "new 一个对象是先分配在 Eden 区吗？",
+    "对象什么时候会进老年代？"
+  ],
+  "java-jvm-memory|引用类型与可达性": [
+    "强引用、软引用、弱引用有什么区别？",
+    "什么是 GC Root？哪些对象可以作为根？"
+  ],
+  "java-jvm-memory|内存泄漏的典型形态": [
+    "内存泄漏怎么排查？",
+    "Full GC 之后内存还是不降是什么原因？"
+  ],
+  "java-gc-tuning|分代回收的基本假设": [
+    "为什么垃圾回收要分代？",
+    "新生代和老年代的回收策略有什么不同？"
+  ],
+  "java-gc-tuning|主流回收器对比": [
+    "G1 和 ZGC 的停顿时间差别大吗？",
+    "CMS 为什么被废弃了？"
+  ],
+  "java-gc-tuning|关键参数与调优思路": [
+    "Full GC 太频繁了要怎么调？",
+    "堆内存大小应该怎么设置？"
+  ],
+  "java-gc-tuning|GC 日志怎么读": [
+    "GC 日志里的那几个数字分别代表什么？",
+    "怎么看一次 GC 到底停了多久？"
+  ],
+  "java-concurrency|线程池的七个参数": [
+    "线程池的核心参数有哪些？",
+    "核心线程数和最大线程数分别是什么意思？"
+  ],
+  "java-concurrency|线程池打满怎么排查": [
+    "线程池队列满了任务一直堆积怎么办？",
+    "线上接口突然变慢，怀疑线程池打满了，怎么确认？"
+  ],
+  "java-concurrency|synchronized 与 Lock 的区别": [
+    "synchronized 和 ReentrantLock 有什么区别？",
+    "什么时候必须用 Lock 而不能用 synchronized？"
+  ],
+  "java-concurrency|volatile 与内存可见性": [
+    "volatile 能保证原子性吗？",
+    "为什么加了 volatile 还是有并发问题？"
+  ],
+  "java-concurrency|死锁的四个必要条件与排查": [
+    "死锁是怎么产生的？",
+    "线上出现死锁怎么定位？"
+  ],
+  "java-mysql-index|B+ 树为什么适合做索引": [
+    "为什么 MySQL 索引用 B+ 树而不是 B 树或者哈希？",
+    "B+ 树和红黑树比有什么优势？"
+  ],
+  "java-mysql-index|索引失效的常见场景": [
+    "索引在什么情况下会失效？",
+    "为什么加了索引还是走全表扫描？"
+  ],
+  "java-mysql-index|执行计划怎么读": [
+    "explain 执行计划里的 type 怎么看？",
+    "explain 输出里哪些字段最关键？"
+  ],
+  "java-mysql-index|慢查询的定位与优化": [
+    "慢 SQL 应该怎么定位和优化？",
+    "线上接口慢，怎么判断是数据库的问题？"
+  ],
+  "java-mysql-index|事务隔离级别与锁": [
+    "MySQL 的四种隔离级别分别解决了什么问题？",
+    "可重复读是怎么实现的？MVCC 是什么？"
+  ],
+  "java-redis-cache|缓存穿透、击穿、雪崩": [
+    "缓存穿透和缓存击穿有什么区别？",
+    "缓存雪崩怎么防？"
+  ],
+  "java-redis-cache|缓存与数据库的一致性": [
+    "缓存和数据库的数据怎么保证一致？",
+    "更新数据的时候应该先删缓存还是先更新库？"
+  ],
+  "java-redis-cache|数据结构与适用场景": [
+    "Redis 有哪些数据结构？分别用在哪？",
+    "排行榜应该用什么数据结构实现？"
+  ],
+  "java-redis-cache|持久化与过期策略": [
+    "RDB 和 AOF 怎么选？",
+    "Redis 的 key 过期之后是立刻删除吗？"
+  ],
+  "java-redis-cache|分布式锁的正确姿势": [
+    "用 Redis 实现分布式锁要注意什么？",
+    "为什么释放锁要用 Lua 脚本？"
+  ],
+  "java-spring-core|事务失效的六种情况": [
+    "@Transactional 注解什么时候会失效？",
+    "方法内部自己调用自己，事务为什么不起作用？"
+  ],
+  "java-spring-core|事务传播行为": [
+    "事务传播行为 REQUIRED 和 REQUIRES_NEW 的区别？",
+    "嵌套事务回滚会影响外层吗？"
+  ],
+  "java-spring-core|AOP 的代理方式": [
+    "Spring AOP 用的是 JDK 代理还是 CGLIB？",
+    "为什么 AOP 对 private 方法不生效？"
+  ],
+  "java-spring-core|循环依赖与三级缓存": [
+    "Spring 的循环依赖是怎么解决的？",
+    "三级缓存分别存什么？为什么要三级而不是两级？"
+  ],
+  "java-spring-core|Bean 的生命周期": [
+    "一个 Bean 从创建到销毁经历了哪些阶段？",
+    "BeanPostProcessor 在什么时候执行？"
+  ],
+  "frontend-js-core|事件循环与任务队列": [
+    "事件循环里微任务和宏任务的执行顺序？",
+    "setTimeout 和 Promise 谁先执行？"
+  ],
+  "frontend-js-core|闭包与作用域链": [
+    "闭包会不会造成内存泄漏？",
+    "闭包的变量存在哪里？"
+  ],
+  "frontend-js-core|this 的判定规则": [
+    "this 到底指向谁？",
+    "箭头函数的 this 和普通函数有什么不同？"
+  ],
+  "frontend-js-core|原型链与继承": [
+    "原型链是怎么查找属性的？",
+    "ES6 的 class 和原型继承有什么区别？"
+  ],
+  "frontend-css-layout|盒模型与 box-sizing": [
+    "标准盒模型和 IE 盒模型有什么区别？",
+    "box-sizing: border-box 有什么好处？"
+  ],
+  "frontend-css-layout|BFC 与层叠上下文": [
+    "什么是 BFC，它能解决什么问题？",
+    "margin 重叠怎么消除？"
+  ],
+  "frontend-css-layout|Flex 布局的常见坑": [
+    "flex 布局里子元素被压扁了怎么办？",
+    "flex: 1 到底等于什么？"
+  ],
+  "frontend-css-layout|响应式与单位选择": [
+    "px、em、rem、vw 应该怎么选？",
+    "移动端适配用 rem 还是 vw？"
+  ],
+  "frontend-browser-network|从输入 URL 到页面出现": [
+    "从输入 URL 到页面渲染发生了什么？",
+    "浏览器解析 HTML 的过程中遇到 script 会阻塞吗？"
+  ],
+  "frontend-browser-network|重排、重绘与合成": [
+    "重排和重绘有什么区别？",
+    "哪些 CSS 属性改动会触发重排？"
+  ],
+  "frontend-browser-network|HTTP 缓存机制": [
+    "强缓存和协商缓存的区别？",
+    "Cache-Control 和 ETag 分别管什么？"
+  ],
+  "frontend-browser-network|跨域与安全": [
+    "跨域是怎么产生的，CORS 怎么解决？",
+    "XSS 和 CSRF 有什么区别？"
+  ]
+}

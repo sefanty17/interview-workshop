@@ -2,6 +2,7 @@ node_modules/
 dist/
 # 验收用的临时构建输出（npx vite build --outDir dist-xxx），不入库
 dist-*/
+.verify-dist/
 .vite/
 *.log
 

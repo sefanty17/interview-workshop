@@ -50,6 +50,13 @@ public class KnowledgeChunk {
     @Column(name = "fingerprint", nullable = false)
     private Long fingerprint;
 
+    /**
+     * 假设问题（K6 HyPE）：模型为这段正文生成的「这段话能回答哪些问题」，
+     * 一行一个问题。只用于检索（进 BM25 词表、进向量），不进提示词、不算正文。
+     */
+    @Column(name = "hype_questions", columnDefinition = "CLOB")
+    private String hypeQuestions;
+
     @Column(name = "created_at", columnDefinition = "TIMESTAMP")
     private LocalDateTime createdAt;
 
@@ -107,6 +114,14 @@ public class KnowledgeChunk {
 
     public void setFingerprint(Long fingerprint) {
         this.fingerprint = fingerprint;
+    }
+
+    public String getHypeQuestions() {
+        return hypeQuestions;
+    }
+
+    public void setHypeQuestions(String hypeQuestions) {
+        this.hypeQuestions = hypeQuestions;
     }
 
     public LocalDateTime getCreatedAt() {

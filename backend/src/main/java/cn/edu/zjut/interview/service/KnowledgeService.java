@@ -155,6 +155,7 @@ public class KnowledgeService {
                 // 命中：正文一字不差，只可能因为前面插删导致序号漂移，改序号即可
                 matched.setChunkIndex(index);
                 matched.setHeading(heading);
+                matched.setHypeQuestions(hypeOf(cmd));
                 chunkRepository.save(matched);
                 keptIds.add(matched.getId());
                 reused++;
@@ -166,7 +167,7 @@ public class KnowledgeService {
                         vectorRepository.delete(vector);
                         vectorRepository.flush();
                     }
-                    writeVector(matched.getId(), docId, text);
+                    writeVector(matched.getId(), docId, embedTextOf(cmd));
                     reembedded++;
                 }
             } else {
@@ -176,11 +177,12 @@ public class KnowledgeService {
                 chunk.setHeading(heading);
                 chunk.setText(text);
                 chunk.setCharCount(text.length());
+                chunk.setHypeQuestions(hypeOf(cmd));
                 chunk.setFingerprint(fingerprintOf(cmd));
                 chunk.setCreatedAt(now);
                 chunkRepository.save(chunk);
                 // IDENTITY 主键在 save 时就已经回填，所以这里能直接拿到 chunkId
-                writeVector(chunk.getId(), docId, text);
+                writeVector(chunk.getId(), docId, embedTextOf(cmd));
                 inserted++;
             }
             index++;
@@ -275,10 +277,39 @@ public class KnowledgeService {
         return cmd == null || cmd.text() == null ? "" : cmd.text();
     }
 
-    /** 片段指纹：标题 + 正文。标题也算进指纹，是因为改标题要重算（heading 参与检索展示）。 */
+    /** 假设问题（K6），空串归一成 null，免得库里存一堆空行。 */
+    private static String hypeOf(ChunkCommand cmd) {
+        if (cmd == null || cmd.hypeQuestions() == null) {
+            return null;
+        }
+        String trimmed = cmd.hypeQuestions().strip();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /**
+     * 送去算向量的文本 = 正文 + 假设问题。
+     *
+     * <p>把假设问题也嵌进去，是为了让「用户按自己的说法问」能命中这段：
+     * 正文里写的是「GC Root 引用着，回收不掉」，假设问题里是「内存泄漏怎么排查」，
+     * 两者的字面重合完全不同。换 embedding 模型时这行决定了向量口径。
+     */
+    private static String embedTextOf(ChunkCommand cmd) {
+        String text = textOf(cmd);
+        String hype = hypeOf(cmd);
+        return hype == null ? text : text + "\n" + hype;
+    }
+
+    /**
+     * 片段指纹：标题 + 正文 + 假设问题。
+     *
+     * <p>三者任一变了都要重算向量：标题与假设问题都进索引，正文进提示词。
+     * 假设问题跟着正文一起变，保证「重新生成 HyPE」不会留下旧问题与新正文并存的错配。
+     */
     private static long fingerprintOf(ChunkCommand cmd) {
         String heading = headingOf(cmd);
-        return fnv1a64((heading == null ? "" : heading) + "\n" + textOf(cmd));
+        String hype = hypeOf(cmd);
+        return fnv1a64((heading == null ? "" : heading) + "\n" + textOf(cmd)
+                + "\n" + (hype == null ? "" : hype));
     }
 
     private static boolean sameFingerprints(List<KnowledgeChunk> existing, List<Long> targets) {

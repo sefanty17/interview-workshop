@@ -1,0 +1,24 @@
+{
+  "_说明": "K6 HyPE 的留出评测集。刻意用「用户自己的说法」提问，与 knowledge-questions.json 和 data/knowledge/hype.json 的措辞都不同——主评测集那 26 条是写种子问题时就参考过的，直接拿它比前后提升会高估 HyPE 的效果（等于既出题又给答案）。这 10 条只用来回答一个问题：假设问题到底有没有让「没见过的问法」变得可检索。",
+  "version": "2026-10-27",
+  "positives": [
+    { "q": "程序跑久了内存只涨不降", "job": "java", "doc": "java-jvm-memory", "heading": "内存泄漏的典型形态" },
+    { "q": "根节点是怎么判定的", "job": "java", "doc": "java-jvm-memory", "heading": "引用类型与可达性" },
+    { "q": "几款收集器怎么选", "job": "java", "doc": "java-gc-tuning", "heading": "主流回收器对比" },
+    { "q": "池子的容量怎么配", "job": "java", "doc": "java-concurrency", "heading": "线程池的七个参数" },
+    { "q": "索引有没有被用上", "job": "java", "doc": "java-mysql-index", "heading": "执行计划怎么读" },
+    { "q": "多个服务抢同一个资源怎么加锁", "job": "java", "doc": "java-redis-cache", "heading": "分布式锁的正确姿势" },
+    { "q": "两个 Bean 互相当属性怎么注入成功", "job": "java", "doc": "java-spring-core", "heading": "循环依赖与三级缓存" },
+    { "q": "同步代码跑完之后先处理哪个队列", "job": "frontend", "doc": "frontend-js-core", "heading": "事件循环与任务队列" },
+    { "q": "浏览器什么时候发请求问服务器文件变没变", "job": "frontend", "doc": "frontend-browser-network", "heading": "HTTP 缓存机制" },
+    { "q": "弹性盒子里子项被挤没了", "job": "frontend", "doc": "frontend-css-layout", "heading": "Flex 布局的常见坑" }
+  ],
+  "negatives": [
+    "今天天气怎么样",
+    "帮我写一首关于春天的诗",
+    "你中午吃饭了吗",
+    "怎么养一只橘猫",
+    "推荐一部好看的科幻电影",
+    "明天会下雨吗"
+  ]
+}

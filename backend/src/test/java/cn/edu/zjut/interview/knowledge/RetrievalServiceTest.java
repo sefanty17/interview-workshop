@@ -19,7 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 规格 K3 §7 的七条断言：分词、BM25、向量、融合、阈值、范围、版本失效。
+ * 规格 K3 §7 的七条断言：分词、BM25、向量、融合、阈值、范围、版本失效；
+ * 外加 K6 第八条：假设问题（HyPE）只进词表、不进结果正文。
  *
  * <p>自己造 3 篇文档 6 个片段（前缀 {@code k3-}），与 {@code KnowledgeServiceTest} 同一风格：
  * {@code @SpringBootTest} + test profile 的内存库，{@code @AfterEach} 按前缀删干净，
@@ -202,5 +203,42 @@ class RetrievalServiceTest {
         assertFalse(hits.isEmpty(), "写入后索引缓存没失效，新片段检索不到");
         assertTrue(hits.stream().anyMatch(hit -> PROBE_TEXT.equals(hit.text())),
                 "新片段必须出现在结果里：" + hits);
+    }
+
+    /**
+     * 8. HyPE：假设问题只进词表、不进结果正文。
+     *
+     * <p>构造刻意选「正文与问法零重合」的一对：正文讲三色标记与增量更新，
+     * 用户问的是「写屏障」。不带假设问题时这条必然检索不到（证明差距真实存在，
+     * 不是碰巧命中），补上假设问题后同一句话就能命中（证明 HyPE 起了作用）。
+     * 最后核对结果里的 text 仍是正文原文 —— 假设问题是模型生成的问题，
+     * 一旦混进 text 会被拼进提示词，面试官就会照着念一句谁也没说过的问题。
+     */
+    @Test
+    void 假设问题让用户自己的说法能命中且不污染结果正文() {
+        String doc = PREFIX + "hype-probe";
+        String text = "并发标记阶段用三色标记法，漏标由增量更新与原始快照修正";
+        String heading = "第9章 > 9.1 三色标记";
+        String query = "写屏障是干什么的";
+        String hype = "写屏障是干什么的？\n三色标记的漏标问题怎么解决？";
+        knowledgeService.createDoc(new CreateDocCommand(doc, "并发标记", "java", null, null));
+
+        // 先只写正文：正文里没有「写屏障」这三个字，这条问法不该命中它
+        knowledgeService.syncChunks(doc, List.of(new ChunkCommand(heading, text)));
+        assertTrue(retrievalService.search(query, null, null,
+                        RetrievalService.SearchOptions.defaults(), RetrievalService.RetrievalMode.BM25_ONLY)
+                        .stream().noneMatch(hit -> text.equals(hit.text())),
+                "没有假设问题时不该命中，否则这条用例证明不了什么");
+
+        // 补上假设问题：用户自己的说法被提前写进索引，同一句话就该命中
+        knowledgeService.syncChunks(doc, List.of(new ChunkCommand(heading, text, hype)));
+        List<KnowledgeHit> hits = retrievalService.search(query, null, null,
+                RetrievalService.SearchOptions.defaults(), RetrievalService.RetrievalMode.BM25_ONLY);
+        assertTrue(hits.stream().anyMatch(hit -> text.equals(hit.text())),
+                "假设问题没有进索引，「写屏障」这类问法检索不到：" + hits);
+
+        // 结果正文必须是原文：假设问题只在词表里起作用
+        assertTrue(hits.stream().noneMatch(hit -> hit.text().contains("写屏障是干什么的")),
+                "假设问题漏进了结果正文：" + hits);
     }
 }

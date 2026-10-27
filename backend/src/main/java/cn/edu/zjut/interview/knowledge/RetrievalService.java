@@ -314,7 +314,7 @@ public class RetrievalService {
                 continue;
             }
             docs.add(new RetrievalIndex.Doc(chunk.getId(), doc.getId(), doc.getCode(), doc.getTitle(),
-                    chunk.getHeading(), chunk.getText()));
+                    chunk.getHeading(), chunk.getText(), chunk.getHypeQuestions()));
         }
 
         int dim = embeddingProvider.dimension();

@@ -91,7 +91,7 @@ public class KnowledgeController {
         List<ChunkCommand> chunks = new ArrayList<>();
         if (request != null && request.chunks() != null) {
             for (ChunkItem item : request.chunks()) {
-                chunks.add(new ChunkCommand(item.heading(), item.text()));
+                chunks.add(new ChunkCommand(item.heading(), item.text(), item.hype()));
             }
         }
         // 返回增量明细而不是只给总数：导入脚本靠它证明「改一个字只重算一条」。
@@ -205,8 +205,8 @@ public class KnowledgeController {
             String description) {
     }
 
-    /** 单个片段请求体。 */
-    public record ChunkItem(String heading, String text) {
+    /** 单个片段请求体；{@code hype} 是 K6 的假设问题，一行一个，可省略。 */
+    public record ChunkItem(String heading, String text, String hype) {
     }
 
     /** 片段列表请求体：用对象包一层，将来加切分参数时不用改 body 形状。 */
