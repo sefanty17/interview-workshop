@@ -13,8 +13,10 @@ import cn.edu.zjut.interview.dto.CreateSessionRequest;
 import cn.edu.zjut.interview.dto.CreateSessionResponse;
 import cn.edu.zjut.interview.dto.ReplyEvent;
 import cn.edu.zjut.interview.dto.SessionMessageView;
+import cn.edu.zjut.interview.dto.KnowledgeHit;
 import cn.edu.zjut.interview.god.GodAgentCore;
 import cn.edu.zjut.interview.god.SpeakerSelector;
+import cn.edu.zjut.interview.knowledge.KnowledgeInjector;
 import cn.edu.zjut.interview.llm.LlmClient;
 import cn.edu.zjut.interview.llm.LlmMessage;
 import cn.edu.zjut.interview.llm.LlmOptions;
@@ -101,6 +103,14 @@ public class ChatService {
     private final GodAgentCore godAgent;
 
     /**
+     * 岗位知识注入（K4）：按玩家本轮提问检索知识库，命中则拼进当轮 system。
+     *
+     * <p>开关关闭、没配语料、没命中、检索异常，四种情况都返回空注入 ——
+     * 这条链路只做加法，任何一种退化都不该影响原有对话。
+     */
+    private final KnowledgeInjector knowledgeInjector;
+
+    /**
      * 档位变更时的一次性 announce 文案（批次 4.4，对齐 take_temporary_memories 的 take 语义）：
      * PUT 成功时 put，runTurn 取走即弃、不落库。重启丢失可接受（原版也是会话内存态）。
      */
@@ -149,7 +159,8 @@ public class ChatService {
                        ObjectMapper objectMapper,
                        PlayerIdentityService playerIdentities,
                        InterviewerRelationService interviewerRelations,
-                       GodAgentCore godAgent) {
+                       GodAgentCore godAgent,
+                       KnowledgeInjector knowledgeInjector) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.interviewerRepository = interviewerRepository;
@@ -163,6 +174,7 @@ public class ChatService {
         this.identityPrompt = new PlayerIdentityPrompt(objectMapper);
         this.interviewerRelations = interviewerRelations;
         this.godAgent = godAgent;
+        this.knowledgeInjector = knowledgeInjector;
     }
 
     @PreDestroy
@@ -342,6 +354,11 @@ public class ChatService {
                 // 5.6 批次 4.4 一次性临时 system 注入（announce / 上一轮纠偏），取走即弃、不落库
                 injectPendingSystemMessages(messages, session.getId());
 
+                // 5.7 K4 岗位知识注入：每轮都用玩家本轮的原始输入检索（不学世界书传 rounds==0 ? main : null
+                // ——那条是「按轮次激活」的语义，知识注入没有；第二轮 NPC 抢话问的还是玩家那句）。
+                // 与 5.5 同一铁律：只改本轮请求副本，绝不写回台词表。
+                injectKnowledge(messages, main, speaker, session, emitter);
+
                 // 6~8. LlmClient.stream → SentenceSplitter → SymbolParser → 落库 + emit
                 // 思考链缓冲：对齐 producer.rs:181-193 —— 累积本轮全部 reasoning_content，
                 // 部分供应商会在流结束时重发完整快照，新片以已有内容为前缀时整体替换而非追加。
@@ -488,6 +505,44 @@ public class ChatService {
         if (correction != null) {
             messages.add(at, LlmMessage.system(correction));
         }
+    }
+
+    /**
+     * K4：把命中片段拼到 system 末尾，并推一条 {@code ai:knowledge} 给前端。
+     *
+     * <p>为什么追加到 system 而不是另起一条 system：世界书已经追加在 system 里，
+     * 两条相邻的 system 对模型等价，但 history 重建时把「本轮 system + 资料」当成一份更简单。
+     *
+     * <p>事件 payload 只给「引用了哪些片段」的元信息（code/标题/小节/分数），
+     * <b>不带正文</b>：正文已经在 prompt 里了，没必要再往前端推一遍几百字。
+     */
+    private void injectKnowledge(List<LlmMessage> messages, String userInput, Interviewer speaker,
+                                 InterviewSession session, SseEmitter emitter) {
+        KnowledgeInjector.Injection injection = knowledgeInjector.build(
+                userInput, speaker.getCode(), session.getJobCode());
+        if (injection.isEmpty()) {
+            return;
+        }
+        String block = injection.block();
+        if (messages.isEmpty() || !LlmMessage.ROLE_SYSTEM.equals(messages.get(0).role())) {
+            messages.add(0, LlmMessage.system(block));
+        } else {
+            messages.set(0, LlmMessage.system(messages.get(0).content() + "\n\n" + block));
+        }
+
+        List<Map<String, Object>> items = new ArrayList<>(injection.hits().size());
+        for (KnowledgeHit hit : injection.hits()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("docCode", hit.docCode());
+            item.put("docTitle", hit.docTitle());
+            item.put("heading", hit.heading());
+            item.put("score", Math.round(hit.score() * 10000.0) / 10000.0);
+            items.add(item);
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("count", items.size());
+        payload.put("items", items);
+        send(emitter, "ai:knowledge", payload);
     }
 
     /**

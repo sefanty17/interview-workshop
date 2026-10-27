@@ -42,7 +42,7 @@ class SettingsControllerTest {
     private ObjectMapper objectMapper;
 
     @Test
-    void treeReturnsTwoCategoriesAndSeventeenSettings() throws Exception {
+    void treeReturnsTwoCategoriesAndNineteenSettings() throws Exception {
         userSettingRepository.deleteAll();
 
         MvcResult result = mockMvc.perform(get("/api/settings/tree"))
@@ -51,7 +51,7 @@ class SettingsControllerTest {
                 .andExpect(jsonPath("$.categories[0].id").value("llm"))
                 .andExpect(jsonPath("$.categories[0].subcategories[0].id").value("advanced"))
                 .andExpect(jsonPath("$.categories[1].id").value("features"))
-                .andExpect(jsonPath("$.categories[1].subcategories.length()").value(3))
+                .andExpect(jsonPath("$.categories[1].subcategories.length()").value(4))
                 .andReturn();
 
         JsonNode tree = objectMapper.readTree(result.getResponse().getContentAsString());
@@ -70,7 +70,7 @@ class SettingsControllerTest {
                 }
             }
         }
-        assertEquals(17, total);
+        assertEquals(19, total);
     }
 
     @Test

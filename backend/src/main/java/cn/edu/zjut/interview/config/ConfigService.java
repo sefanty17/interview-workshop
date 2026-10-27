@@ -78,7 +78,10 @@ public class ConfigService {
                             ConfigKey.CHAT_MERGE_THRESHOLD,
                             ConfigKey.CHAT_MERGE_DELAY_MS,
                             ConfigKey.CHAT_TEXT_SPEED,
-                            ConfigKey.CHAT_AUTO_ADVANCE_MS)))));
+                            ConfigKey.CHAT_AUTO_ADVANCE_MS)),
+                    new SubcategorySpec("knowledge", "岗位知识（本项目扩展）", List.of(
+                            ConfigKey.KNOWLEDGE_INJECT_ENABLED,
+                            ConfigKey.KNOWLEDGE_INJECT_TOP_K)))));
 
     /**
      * 有真实消费点的配置键（改这些键会影响运行行为）。
@@ -94,7 +97,9 @@ public class ConfigService {
             ConfigKey.LLM_MAX_TOKENS,       // LlmOptions.from → 请求体 max_tokens
             ConfigKey.LLM_TIMEOUT_SECS,     // LlmOptions.from → HttpRequest timeout
             ConfigKey.CHAT_REPLY_COUNT,     // ChatTuning → PromptAssembler
-            ConfigKey.CHAT_MERGE_THRESHOLD  // ChatTuning → SentenceSplitter
+            ConfigKey.CHAT_MERGE_THRESHOLD, // ChatTuning → SentenceSplitter
+            ConfigKey.KNOWLEDGE_INJECT_ENABLED, // ChatService → KnowledgeInjector 开关
+            ConfigKey.KNOWLEDGE_INJECT_TOP_K    // ChatService → KnowledgeInjector 每轮注入片段数
     );
 
     /** key → 定义；LinkedHashMap 保住注册顺序（也就是前端渲染顺序）。 */
@@ -158,6 +163,13 @@ public class ConfigService {
                         "自动推进下一句的延迟（毫秒；本项目扩展；仅存值：消费端在前端）", true),
                 ConfigSetting.boolSetting(ConfigKey.CHAT_INLINE_ACTION, "chat", "内联动作文本", false,
                         "动作文本与台词同时显示，无需二次点击（本项目扩展；仅存值：消费端在前端）", true),
+
+                // ===== 岗位知识（本项目扩展：RAG）=====
+                ConfigSetting.boolSetting(ConfigKey.KNOWLEDGE_INJECT_ENABLED, "knowledge", "岗位知识注入", true,
+                        "面试时按玩家本轮提问检索岗位知识库，命中则注入当轮 system（本项目扩展，"
+                                + "阈值与融合权重见 RetrievalService）", true),
+                ConfigSetting.intSetting(ConfigKey.KNOWLEDGE_INJECT_TOP_K, "knowledge", "每轮注入片段数", 3, 1, 10,
+                        "每轮最多注入几个知识片段；片段约 300~900 字，3 个已占 2000 字上下文（本项目扩展）", true),
 
                 // ===== 界面显示 =====
                 ConfigSetting.stringSetting(ConfigKey.DISPLAY_FONT_FAMILY, "display", "界面字体", "",

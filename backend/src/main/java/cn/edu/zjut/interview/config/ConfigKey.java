@@ -55,6 +55,13 @@ public final class ConfigKey {
     /** 内联动作文本（动作与台词同时显示）。 */
     public static final String CHAT_INLINE_ACTION = "chat.inline_action";
 
+    // ========== 岗位知识（本项目扩展：RAG 检索注入）==========
+
+    /** 面试时是否把检索到的岗位知识注入当轮 system。 */
+    public static final String KNOWLEDGE_INJECT_ENABLED = "knowledge.inject.enabled";
+    /** 每轮最多注入几个片段（片段很长，3 个已约 2000 字）。 */
+    public static final String KNOWLEDGE_INJECT_TOP_K = "knowledge.inject.top_k";
+
     // ========== 界面与显示 ==========
 
     /** 界面字体，空串 = 软件默认。 */

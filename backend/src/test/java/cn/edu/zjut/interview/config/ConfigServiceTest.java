@@ -37,7 +37,7 @@ class ConfigServiceTest {
     private UserSettingRepository userSettingRepository;
 
     @Test
-    void treeHasTwoCategoriesFourSubcategoriesAndSeventeenDefaultValues() {
+    void treeHasTwoCategoriesFourSubcategoriesAndNineteenDefaultValues() {
         userSettingRepository.deleteAll();
         ConfigTree tree = configService.buildTree();
 
@@ -46,14 +46,15 @@ class ConfigServiceTest {
                 tree.categories().stream().map(ConfigTree.Category::id).toList());
         assertEquals(List.of("advanced"),
                 tree.categories().get(0).subcategories().stream().map(ConfigTree.Subcategory::id).toList());
-        assertEquals(List.of("chat-enhance", "interface", "chat-rhythm"),
+        // chat-rhythm 之后接 knowledge（K4 岗位知识注入的两项）
+        assertEquals(List.of("chat-enhance", "interface", "chat-rhythm", "knowledge"),
                 tree.categories().get(1).subcategories().stream().map(ConfigTree.Subcategory::id).toList());
 
         int total = tree.categories().stream()
                 .flatMap(category -> category.subcategories().stream())
                 .mapToInt(sub -> sub.settings().size())
                 .sum();
-        assertEquals(17, total, "第一批 17 个 key（audio.volume_character 已删）");
+        assertEquals(19, total, "17 个既有 key + K4 的岗位知识 2 个");
 
         for (ConfigTree.Category category : tree.categories()) {
             for (ConfigTree.Subcategory sub : category.subcategories()) {
