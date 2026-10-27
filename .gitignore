@@ -38,3 +38,6 @@ docs/*.mp4
 docs/课设材料/
 /*.docx
 /*.pptx
+
+# 知识库导入脚本的本地指纹缓存（机器本地状态，不入库）
+data/knowledge/.knowledge-index.json

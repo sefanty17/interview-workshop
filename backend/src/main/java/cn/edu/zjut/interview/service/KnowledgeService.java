@@ -19,17 +19,19 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.ByteBuffer;
 import java.time.LocalDateTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * 岗位知识库的读写（K1）：文档、片段、向量、角色挂载四张表在这里保持一致。
+ * 岗位知识库的读写（K1/K2）：文档、片段、向量、角色挂载四张表在这里保持一致。
  *
- * <p>核心约定是<b>覆盖式写入</b>：导入脚本每次把整份 md 重新切一遍，
- * 所以 {@link #replaceChunks} 先清空该文档的片段与向量再写回，
- * 不做增量 diff——增量需要稳定的片段标识，而切分参数一变标识就漂移。
+ * <p>写入是<b>按指纹增量同步</b>：{@link #syncChunks} 逐条比对片段指纹，命中的复用（含向量），
+ * 只有变化的片段才重算向量，消失的连向量一起删。整篇重传同一份 md 是零写入。
  *
  * <p>向量只是缓存：算不出来不影响片段本身，删掉后 {@link #reindexDoc} 可以从片段重建。
  */
@@ -81,50 +83,171 @@ public class KnowledgeService {
     }
 
     /**
-     * 覆盖式写入片段：先删该 doc 的全部 chunk 与 vector，再插入新 chunk 并立即算向量。
+     * 覆盖式写入片段（对外仍叫 replace：脚本每次提交的是整篇文档的完整切分结果）。
      *
-     * <p>{@code chunks} 为空 => 只清空，不报错（等价于「这篇文档暂时没有可用内容」）。
+     * <p>内部是<b>按内容指纹增量同步</b>而不是「全删重建」：
+     * 逐条比对 {@code (heading + "\n" + text)} 的指纹，命中的片段整行复用（连 id 和向量一起留），
+     * 只有指纹变了或新增的片段才重新算向量，消失的片段连同向量删掉。
+     * 这样「改一个字重跑」只重算那一条，而不是把整篇 20 个片段的向量都重算一遍。
+     *
+     * <p>不做「靠位置对齐」的 diff：在中间插一段会让后面所有位置整体偏移，
+     * 按位置比就会把后面每一条都判成「变了」。指纹与位置无关，插入/删除/换序都不会误伤。
      *
      * @return 实际写入的片段条数
      */
     @Transactional
     public int replaceChunks(String docCode, List<ChunkCommand> chunks) {
+        return syncChunks(docCode, chunks).total();
+    }
+
+    /** 同 {@link #replaceChunks}，但返回「动了多少」的明细，供导入脚本核对增量是否生效。 */
+    @Transactional
+    public ChunkSyncResult syncChunks(String docCode, List<ChunkCommand> chunks) {
         KnowledgeDoc doc = requireDoc(docCode);
         Long docId = doc.getId();
 
-        // 先 flush 再删：同一事务里「删旧 + 插新」时，直接下批量 DELETE 会撞上尚未刷出的旧行
-        vectorRepository.flush();
-        vectorRepository.deleteByDocId(docId);
-        vectorRepository.flush();
-        chunkRepository.flush();
-        chunkRepository.deleteByDocId(docId);
-        chunkRepository.flush();
+        List<KnowledgeChunk> existing = chunkRepository.findByDocIdOrderByChunkIndexAsc(docId);
+        Map<Long, KnowledgeVector> vectorByChunkId = new HashMap<>();
+        for (KnowledgeVector vector : vectorRepository.findByDocId(docId)) {
+            vectorByChunkId.put(vector.getChunkId(), vector);
+        }
 
-        if (chunks == null || chunks.isEmpty()) {
+        List<ChunkCommand> incoming = chunks == null ? List.of() : chunks;
+        List<Long> targets = new ArrayList<>(incoming.size());
+        for (ChunkCommand cmd : incoming) {
+            targets.add(fingerprintOf(cmd));
+        }
+
+        // 快路径：条数、顺序、指纹全一致且向量都有效 => 一行不动。
+        // 这是「同一份 md 跑两次」的常态，省掉全部写操作。
+        if (sameFingerprints(existing, targets) && allVectorsValid(existing, vectorByChunkId)) {
             touch(doc);
-            return 0;
+            return new ChunkSyncResult(existing.size(), existing.size(), 0, 0, 0);
+        }
+
+        // 指纹 -> 候选片段队列。同一指纹可能出现多次（两段正文一字不差），用队列逐条领。
+        Map<Long, Deque<KnowledgeChunk>> pool = new HashMap<>();
+        for (KnowledgeChunk chunk : existing) {
+            pool.computeIfAbsent(chunk.getFingerprint(), key -> new ArrayDeque<>()).add(chunk);
         }
 
         LocalDateTime now = LocalDateTime.now();
+        List<Long> keptIds = new ArrayList<>(incoming.size());
         int index = 0;
-        for (ChunkCommand cmd : chunks) {
-            String heading = cmd == null ? null : cmd.heading();
-            String text = cmd == null || cmd.text() == null ? "" : cmd.text();
-            KnowledgeChunk chunk = new KnowledgeChunk();
-            chunk.setDocId(docId);
-            chunk.setChunkIndex(index);
-            chunk.setHeading(heading);
-            chunk.setText(text);
-            chunk.setCharCount(text.length());
-            chunk.setFingerprint(fnv1a64((heading == null ? "" : heading) + "\n" + text));
-            chunk.setCreatedAt(now);
-            chunkRepository.save(chunk);
-            // IDENTITY 主键在 save 时就已经回填，所以这里能直接拿到 chunkId
-            writeVector(chunk.getId(), docId, text);
+        int inserted = 0;
+        int reused = 0;
+        int reembedded = 0;
+
+        for (ChunkCommand cmd : incoming) {
+            String heading = headingOf(cmd);
+            String text = textOf(cmd);
+            Deque<KnowledgeChunk> candidates = pool.get(fingerprintOf(cmd));
+            KnowledgeChunk matched = candidates == null ? null : candidates.poll();
+
+            if (matched != null) {
+                // 命中：正文一字不差，只可能因为前面插删导致序号漂移，改序号即可
+                matched.setChunkIndex(index);
+                matched.setHeading(heading);
+                chunkRepository.save(matched);
+                keptIds.add(matched.getId());
+                reused++;
+
+                KnowledgeVector vector = vectorByChunkId.get(matched.getId());
+                if (!isVectorValid(vector)) {
+                    // 换了 embedding 模型或清了向量缓存：片段留着，向量重算
+                    if (vector != null) {
+                        vectorRepository.delete(vector);
+                        vectorRepository.flush();
+                    }
+                    writeVector(matched.getId(), docId, text);
+                    reembedded++;
+                }
+            } else {
+                KnowledgeChunk chunk = new KnowledgeChunk();
+                chunk.setDocId(docId);
+                chunk.setChunkIndex(index);
+                chunk.setHeading(heading);
+                chunk.setText(text);
+                chunk.setCharCount(text.length());
+                chunk.setFingerprint(fingerprintOf(cmd));
+                chunk.setCreatedAt(now);
+                chunkRepository.save(chunk);
+                // IDENTITY 主键在 save 时就已经回填，所以这里能直接拿到 chunkId
+                writeVector(chunk.getId(), docId, text);
+                inserted++;
+            }
             index++;
         }
+
+        // 池子里剩下的就是「原文有、新版本没有」的片段，连同向量一起删
+        List<KnowledgeChunk> removed = new ArrayList<>();
+        List<KnowledgeVector> removedVectors = new ArrayList<>();
+        for (KnowledgeChunk chunk : existing) {
+            if (!keptIds.contains(chunk.getId())) {
+                removed.add(chunk);
+                KnowledgeVector vector = vectorByChunkId.get(chunk.getId());
+                if (vector != null) {
+                    removedVectors.add(vector);
+                }
+            }
+        }
+        if (!removedVectors.isEmpty()) {
+            vectorRepository.deleteAll(removedVectors);
+            vectorRepository.flush();
+        }
+        if (!removed.isEmpty()) {
+            chunkRepository.deleteAll(removed);
+            chunkRepository.flush();
+        }
+
         touch(doc);
-        return index;
+        return new ChunkSyncResult(incoming.size(), reused, inserted, removed.size(), reembedded);
+    }
+
+    /** 增量同步的明细：total = reused + inserted。 */
+    public record ChunkSyncResult(int total, int reused, int inserted, int deleted, int reembedded) {
+    }
+
+    private static String headingOf(ChunkCommand cmd) {
+        return cmd == null ? null : cmd.heading();
+    }
+
+    private static String textOf(ChunkCommand cmd) {
+        return cmd == null || cmd.text() == null ? "" : cmd.text();
+    }
+
+    /** 片段指纹：标题 + 正文。标题也算进指纹，是因为改标题要重算（heading 参与检索展示）。 */
+    private static long fingerprintOf(ChunkCommand cmd) {
+        String heading = headingOf(cmd);
+        return fnv1a64((heading == null ? "" : heading) + "\n" + textOf(cmd));
+    }
+
+    private static boolean sameFingerprints(List<KnowledgeChunk> existing, List<Long> targets) {
+        if (existing.size() != targets.size()) {
+            return false;
+        }
+        for (int i = 0; i < targets.size(); i++) {
+            if (!targets.get(i).equals(existing.get(i).getFingerprint())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean allVectorsValid(List<KnowledgeChunk> chunks, Map<Long, KnowledgeVector> vectorByChunkId) {
+        for (KnowledgeChunk chunk : chunks) {
+            if (!isVectorValid(vectorByChunkId.get(chunk.getId()))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 向量的有效性 = 「模型 + 维度」都等于当前 provider，跨模型的向量不可比。 */
+    private boolean isVectorValid(KnowledgeVector vector) {
+        return vector != null
+                && vector.getDim() != null && vector.getDim() == embeddingProvider.dimension()
+                && embeddingProvider.modelName().equals(vector.getModel());
     }
 
     /**

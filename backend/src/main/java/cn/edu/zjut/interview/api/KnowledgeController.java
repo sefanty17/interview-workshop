@@ -78,15 +78,18 @@ public class KnowledgeController {
 
     /** 覆盖式写入片段：body 里 {@code chunks} 为空数组等于「清空这篇文档的语料」。 */
     @PutMapping("/knowledge/docs/{code}/chunks")
-    public CountView replaceChunks(@PathVariable String code,
-                                   @RequestBody(required = false) ChunksRequest request) {
+    public SyncView replaceChunks(@PathVariable String code,
+                                  @RequestBody(required = false) ChunksRequest request) {
         List<ChunkCommand> chunks = new ArrayList<>();
         if (request != null && request.chunks() != null) {
             for (ChunkItem item : request.chunks()) {
                 chunks.add(new ChunkCommand(item.heading(), item.text()));
             }
         }
-        return new CountView(service.replaceChunks(code, chunks));
+        // 返回增量明细而不是只给总数：导入脚本靠它证明「改一个字只重算一条」。
+        KnowledgeService.ChunkSyncResult result = service.syncChunks(code, chunks);
+        return new SyncView(result.total(), result.reused(), result.inserted(),
+                result.deleted(), result.reembedded());
     }
 
     @PostMapping("/knowledge/docs/{code}/reindex")
@@ -150,6 +153,13 @@ public class KnowledgeController {
 
     /** 批量写操作的统一返回：只有条数。 */
     public record CountView(int count) {
+    }
+
+    /**
+     * 片段同步的返回：{@code count} 是写入后的总条数，
+     * 其余字段说明这次到底动了多少（脚本据此验证增量是否生效）。
+     */
+    public record SyncView(int count, int reused, int inserted, int deleted, int reembedded) {
     }
 
     public record HealthView(

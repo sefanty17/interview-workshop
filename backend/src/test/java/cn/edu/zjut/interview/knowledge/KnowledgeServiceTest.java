@@ -174,4 +174,107 @@ class KnowledgeServiceTest {
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("文档没出现在 listDocs 里：" + code));
     }
+
+    // ---------------------------------------------------------------- K2 增量同步
+    //
+    // 四条断言的共同点：不看「条数对不对」，看「几条被保留、几条被重建」。
+    // chunk id 变了就说明那一行被删了重插，也就意味着向量重算过。
+
+    /** K2-1. 同一份片段连写两次：第二次必须整篇复用，一条都不重算。 */
+    @Test
+    void 重复写入同一份片段时零重建() {
+        String code = PREFIX + "sync-same";
+        service.createDoc(new CreateDocCommand(code, "幂等", "java", null, null));
+        List<ChunkCommand> chunks = List.of(
+                new ChunkCommand("第1章", "JVM 内存分为堆和栈"),
+                new ChunkCommand("第1章 > 1.1", "垃圾回收器有 G1 和 ZGC"),
+                new ChunkCommand("第2章", "内存泄漏用 jmap 和 MAT 排查"));
+
+        service.syncChunks(code, chunks);
+        List<Long> idsBefore = chunkIds(code);
+
+        KnowledgeService.ChunkSyncResult result = service.syncChunks(code, chunks);
+
+        assertEquals(3, result.total());
+        assertEquals(3, result.reused());
+        assertEquals(0, result.inserted());
+        assertEquals(0, result.deleted());
+        assertEquals(0, result.reembedded());
+        assertEquals(idsBefore, chunkIds(code), "复用必须保留原 chunk id");
+    }
+
+    /** K2-2. 改一个字：只重建那一条，其余两条 id 不变。 */
+    @Test
+    void 改动一条正文时只重建那一条() {
+        String code = PREFIX + "sync-one";
+        service.createDoc(new CreateDocCommand(code, "增量", "java", null, null));
+        service.syncChunks(code, List.of(
+                new ChunkCommand("第1章", "JVM 内存分为堆和栈"),
+                new ChunkCommand("第1章 > 1.1", "垃圾回收器有 G1 和 ZGC"),
+                new ChunkCommand("第2章", "内存泄漏用 jmap 和 MAT 排查")));
+        List<Long> idsBefore = chunkIds(code);
+
+        KnowledgeService.ChunkSyncResult result = service.syncChunks(code, List.of(
+                new ChunkCommand("第1章", "JVM 内存分为堆和栈"),
+                new ChunkCommand("第1章 > 1.1", "垃圾回收器有 G1 和 ZGC2"),
+                new ChunkCommand("第2章", "内存泄漏用 jmap 和 MAT 排查")));
+
+        assertEquals(3, result.total());
+        assertEquals(2, result.reused());
+        assertEquals(1, result.inserted());
+        assertEquals(1, result.deleted());
+        List<Long> idsAfter = chunkIds(code);
+        assertEquals(3, idsAfter.size());
+        assertTrue(idsAfter.contains(idsBefore.get(0)), "第 1 条应被复用");
+        assertTrue(idsAfter.contains(idsBefore.get(2)), "第 3 条应被复用");
+        assertFalse(idsAfter.contains(idsBefore.get(1)), "改过的那条必须是新行");
+    }
+
+    /** K2-3. 在开头插一段：按指纹配对，后面三条的位置整体后移但 id 全部保留。 */
+    @Test
+    void 开头插入一段时其余片段不被误重建() {
+        String code = PREFIX + "sync-insert";
+        service.createDoc(new CreateDocCommand(code, "插入", "java", null, null));
+        service.syncChunks(code, List.of(
+                new ChunkCommand("第1章", "JVM 内存分为堆和栈"),
+                new ChunkCommand("第1章 > 1.1", "垃圾回收器有 G1 和 ZGC")));
+        List<Long> idsBefore = chunkIds(code);
+
+        KnowledgeService.ChunkSyncResult result = service.syncChunks(code, List.of(
+                new ChunkCommand("第0章", "这一段是新插到最前面的"),
+                new ChunkCommand("第1章", "JVM 内存分为堆和栈"),
+                new ChunkCommand("第1章 > 1.1", "垃圾回收器有 G1 和 ZGC")));
+
+        assertEquals(3, result.total());
+        List<Long> idsAfter = chunkIds(code);
+        assertTrue(idsAfter.containsAll(idsBefore),
+                "原有两条的 id 必须都还在：before=" + idsBefore + " after=" + idsAfter + " result=" + result);
+    }
+
+    /** K2-4. 删掉中间一段：只留 deleted=1，向量行数同步减一。 */
+    @Test
+    void 删除中间一段时向量同步清理() {
+        String code = PREFIX + "sync-remove";
+        service.createDoc(new CreateDocCommand(code, "删除", "java", null, null));
+        service.syncChunks(code, List.of(
+                new ChunkCommand("第1章", "JVM 内存分为堆和栈"),
+                new ChunkCommand("第1章 > 1.1", "垃圾回收器有 G1 和 ZGC"),
+                new ChunkCommand("第2章", "内存泄漏用 jmap 和 MAT 排查")));
+
+        KnowledgeService.ChunkSyncResult result = service.syncChunks(code, List.of(
+                new ChunkCommand("第1章", "JVM 内存分为堆和栈"),
+                new ChunkCommand("第2章", "内存泄漏用 jmap 和 MAT 排查")));
+
+        assertEquals(1, result.deleted());
+        KnowledgeDocView view = viewOf(code);
+        assertEquals(2, view.chunkCount());
+        assertEquals(2, view.vectorCount(), "删片段必须连向量一起删");
+    }
+
+    private List<Long> chunkIds(String docCode) {
+        Long docId = docRepository.findByCode(docCode).orElseThrow().getId();
+        return chunkRepository.findByDocIdOrderByChunkIndexAsc(docId).stream()
+                .map(chunk -> chunk.getId())
+                .toList();
+    }
 }
