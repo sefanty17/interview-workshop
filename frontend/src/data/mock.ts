@@ -55,6 +55,11 @@ export interface QuestionReview {
 
 export interface InterviewRecord {
   id: string;
+  /**
+   * 本场后端场次 id；有它报告页才能去后端拉 AI 评估。
+   * 老存档没有这个字段，报告页会退回本地数据。
+   */
+  sessionId?: number;
   jobName: string;
   personaName: string;
   date: string;

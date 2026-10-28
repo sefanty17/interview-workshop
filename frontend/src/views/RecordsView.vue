@@ -188,7 +188,8 @@ function excerpt(r: InterviewRecord): string {
 /** 后端条目没有逐题数据，ReportView 渲染不了，改成弹窗显示摘要 */
 async function openReport(r: InterviewRecord) {
   if (!isRemote(r)) {
-    router.push("/report/" + r.id);
+    // 有后端场次 id 就带上，报告页靠它去拉 AI 评估；老存档没有 sid 会退回本地数据
+    router.push(r.sessionId ? `/report/${r.id}?sid=${r.sessionId}` : "/report/" + r.id);
     return;
   }
   const summary = remoteSummaries.get(r.id);

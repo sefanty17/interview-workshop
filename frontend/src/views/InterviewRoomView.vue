@@ -689,8 +689,11 @@ async function finish() {
     }
   }
 
+  // clearSession() 会清掉本地会话缓存，先把场次 id 取出来，跳转时要拼进 ?sid=
+  const sid = sessionId.value;
   const record: InterviewRecord = {
     id: `r-${Date.now()}`,
+    sessionId: sid ?? undefined,
     jobName: job.value.name,
     personaName: `${persona.value.name} · ${persona.value.displayRole}`,
     date: new Date().toLocaleString("zh-CN", { hour12: false }).replace(/\//g, "-"),
@@ -714,7 +717,7 @@ async function finish() {
 
   addRecord(record);
   clearSession();
-  router.push(`/report/${record.id}`);
+  router.push(sid ? `/report/${record.id}?sid=${sid}` : `/report/${record.id}`);
 }
 
 /** 把 session.messages 还原成房间句子队列（刷新/挂载恢复）
