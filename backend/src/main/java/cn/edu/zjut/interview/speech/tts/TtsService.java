@@ -1,6 +1,9 @@
 package cn.edu.zjut.interview.speech.tts;
 
 import cn.edu.zjut.interview.speech.tts.adapters.Bv2Adapter;
+import cn.edu.zjut.interview.speech.tts.adapters.CosyvoiceAdapter;
+import cn.edu.zjut.interview.speech.tts.adapters.FishS2Adapter;
+import cn.edu.zjut.interview.speech.tts.adapters.GsvAdapter;
 import cn.edu.zjut.interview.speech.tts.adapters.Sbv2Adapter;
 import cn.edu.zjut.interview.speech.tts.adapters.Sbv2ApiAdapter;
 import cn.edu.zjut.interview.speech.tts.adapters.VitsAdapter;
@@ -39,9 +42,10 @@ public class TtsService {
      */
     static final int MAX_CONSECUTIVE_FAILURES = 3;
 
-    /** 本批已接入的引擎类型。V5b / V5c 往这里加，{@code /engines} 的 supported 自动跟着变。 */
+    /** 已接入 8 个引擎。V5c 往这里加，{@code /engines} 的 supported 自动跟着变。 */
     public static final Set<String> SUPPORTED_TYPES = Set.of(
-            Sbv2Adapter.TYPE, Sbv2ApiAdapter.TYPE, Bv2Adapter.TYPE, VitsAdapter.TYPE);
+            Sbv2Adapter.TYPE, Sbv2ApiAdapter.TYPE, Bv2Adapter.TYPE, VitsAdapter.TYPE,
+            GsvAdapter.TYPE_GSV, GsvAdapter.TYPE_GPT_SOVITS, FishS2Adapter.TYPE, CosyvoiceAdapter.TYPE);
 
     private final TtsSettingsService settingsService;
 
@@ -153,6 +157,10 @@ public class TtsService {
             case Sbv2ApiAdapter.TYPE -> new Sbv2ApiAdapter(settings);
             case Bv2Adapter.TYPE -> new Bv2Adapter(settings);
             case VitsAdapter.TYPE -> new VitsAdapter(settings);
+            case GsvAdapter.TYPE_GSV -> new GsvAdapter(settings, GsvAdapter.TYPE_GSV);
+            case GsvAdapter.TYPE_GPT_SOVITS -> new GsvAdapter(settings, GsvAdapter.TYPE_GPT_SOVITS);
+            case FishS2Adapter.TYPE -> new FishS2Adapter(settings);
+            case CosyvoiceAdapter.TYPE -> new CosyvoiceAdapter(settings);
             default -> {
                 TtsEngineCatalog.Entry entry = TtsEngineCatalog.require(type);
                 throw TtsException.unsupported("引擎 " + entry.type() + "（" + entry.displayName()

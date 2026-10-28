@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * TTS 侧统一的 HTTP 出口：只用 JDK 自带 {@link HttpClient}，不引任何 SDK。
@@ -56,12 +57,67 @@ public final class TtsHttp {
             builder.header("Content-Type", "application/json");
             builder.POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8));
         }
-        return send(builder.build(), timeoutSeconds);
+        return send(builder.build(), timeoutSeconds, false);
     }
 
     /** GET，查询参数走 URL。上游 vits 用的是 GET（{@code vits.rs:42}），不是 POST。 */
     public static byte[] get(String url, Map<String, String> query, int timeoutSeconds) {
-        return send(request(url, query, timeoutSeconds).GET().build(), timeoutSeconds);
+        return send(request(url, query, timeoutSeconds).GET().build(), timeoutSeconds, false);
+    }
+
+    /**
+     * POST 一个 {@code multipart/form-data} 包体，<b>只支持文本字段</b>。
+     *
+     * <p>为什么不做文件上传：Fish S2 的 {@code /generate} 收的 {@code voice} 是音色标识
+     * 字符串（如 {@code paimeng}），不是音频文件；参考音频走的是本机服务自己管理的音色库。
+     * 为一个用不到的能力写 FileBody 拼接只会留下没人测的分支。
+     *
+     * <p>为什么不引 multipart 库：JDK 没有现成的 multipart 构造器，而这里只需要
+     * 「N 个文本字段」这一种形状（RFC 7578 的 body 也就是几行固定格式），
+     * 手拼二十行比多一个依赖更容易审。
+     *
+     * @param fields         字段名 → 字段值，按 {@link java.util.LinkedHashMap} 的顺序发送
+     * @param headers        额外请求头；{@code Content-Type} 由本方法负责，不要在这里重复给
+     * @param timeoutSeconds 超时秒数，<=0 用默认值
+     */
+    public static byte[] postMultipart(String url, Map<String, String> fields,
+                                       Map<String, String> headers, int timeoutSeconds) {
+        String boundary = "----TtsBoundary" + UUID.randomUUID().toString().replace("-", "");
+        HttpRequest.Builder builder = request(url, null, timeoutSeconds);
+        // 先设 Content-Type 再叠 headers：调用方若在 headers 里也给了，后写的覆盖前的（与 HttpClient 的语义一致）
+        builder.header("Content-Type", "multipart/form-data; boundary=" + boundary);
+        if (headers != null) {
+            headers.forEach(builder::header);
+        }
+        builder.POST(HttpRequest.BodyPublishers.ofByteArray(multipartBody(boundary, fields)));
+        return send(builder.build(), timeoutSeconds, false);
+    }
+
+    /**
+     * 与 {@link #get} 完全相同，<b>唯一差别：2xx 且响应体为空时不报错</b>，返回空数组。
+     *
+     * <p>为什么需要：GPT-SoVITS 的 {@code set_gpt_weights} / {@code set_sovits_weights}
+     * 成功时常常回一个空体（上游 {@code gsv.rs:116-128} 只看状态码）。用统一的
+     * {@code get} 会把「加载成功」判成 {@code TTS_BAD_RESPONSE}，模型永远加载不上。
+     */
+    public static byte[] getAllowEmpty(String url, Map<String, String> query, int timeoutSeconds) {
+        return send(request(url, query, timeoutSeconds).GET().build(), timeoutSeconds, true);
+    }
+
+    /** 按 RFC 7578 拼包体：每个字段一段，末尾用 {@code --boundary--} 收口，行尾统一 {@code \r\n}。 */
+    private static byte[] multipartBody(String boundary, Map<String, String> fields) {
+        StringBuilder body = new StringBuilder();
+        if (fields != null) {
+            for (Map.Entry<String, String> field : fields.entrySet()) {
+                body.append("--").append(boundary).append("\r\n")
+                        .append("Content-Disposition: form-data; name=\"").append(field.getKey())
+                        .append("\"\r\n\r\n")
+                        .append(field.getValue() == null ? "" : field.getValue())
+                        .append("\r\n");
+            }
+        }
+        body.append("--").append(boundary).append("--\r\n");
+        return body.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     private static HttpRequest.Builder request(String url, Map<String, String> query, int timeoutSeconds) {
@@ -150,8 +206,10 @@ public final class TtsHttp {
      *
      * <p>空响应体单独判成 {@code TTS_BAD_RESPONSE}：上游服务「200 但什么都没返回」时，
      * 若原样返回空数组，前端会得到 0 字节音频并在播放器里静默失败——报错比静默好。
+     * 唯一例外是 {@code allowEmpty}（见 {@link #getAllowEmpty}）：那几个端点本来就
+     * 只回状态码，空体是<b>正常</b>的。
      */
-    private static byte[] send(HttpRequest request, int timeoutSeconds) {
+    private static byte[] send(HttpRequest request, int timeoutSeconds, boolean allowEmpty) {
         String url = request.uri().toString();
         HttpResponse<byte[]> response;
         try {
@@ -171,6 +229,9 @@ public final class TtsHttp {
         }
         byte[] body = response.body();
         if (body == null || body.length == 0) {
+            if (allowEmpty) {
+                return new byte[0];
+            }
             throw TtsException.badResponse("TTS 上游返回了空响应体（HTTP " + status + "）：" + url);
         }
         return body;

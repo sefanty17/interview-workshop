@@ -189,13 +189,22 @@ class TtsServiceTest {
                 .andExpect(jsonPath("$[0].type").value("edge-tts"))
                 .andExpect(jsonPath("$[0].supported").value(false))
                 .andExpect(jsonPath("$[0].note").isNotEmpty())
-                // 本批已接入的四个
+                // 本批（V5a）已接入的四个
                 .andExpect(jsonPath("$[2].type").value("sbv2"))
                 .andExpect(jsonPath("$[2].supported").value(true))
                 .andExpect(jsonPath("$[8].type").value("vits"))
                 .andExpect(jsonPath("$[8].supported").value(true))
                 .andExpect(jsonPath("$[12].type").value("local-sbv2"))
-                .andExpect(jsonPath("$[12].supported").value(false));
+                .andExpect(jsonPath("$[12].supported").value(false))
+                // V5b 接入的四个：gpt-sovits / cosyvoice / fish-speech / gsv
+                .andExpect(jsonPath("$[1].type").value("gpt-sovits"))
+                .andExpect(jsonPath("$[1].supported").value(true))
+                .andExpect(jsonPath("$[4].type").value("cosyvoice"))
+                .andExpect(jsonPath("$[4].supported").value(true))
+                .andExpect(jsonPath("$[6].type").value("fish-speech"))
+                .andExpect(jsonPath("$[6].supported").value(true))
+                .andExpect(jsonPath("$[11].type").value("gsv"))
+                .andExpect(jsonPath("$[11].supported").value(true));
     }
 
     /** 把某引擎的配置写进库；其余 12 个引擎保留默认配置（模拟前端整份 PUT）。 */
