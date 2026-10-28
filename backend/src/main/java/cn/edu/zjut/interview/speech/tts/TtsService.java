@@ -1,9 +1,12 @@
 package cn.edu.zjut.interview.speech.tts;
 
+import cn.edu.zjut.interview.speech.tts.adapters.AivisAdapter;
 import cn.edu.zjut.interview.speech.tts.adapters.Bv2Adapter;
 import cn.edu.zjut.interview.speech.tts.adapters.CosyvoiceAdapter;
 import cn.edu.zjut.interview.speech.tts.adapters.FishS2Adapter;
 import cn.edu.zjut.interview.speech.tts.adapters.GsvAdapter;
+import cn.edu.zjut.interview.speech.tts.adapters.IndexTts2Adapter;
+import cn.edu.zjut.interview.speech.tts.adapters.OpenTtsAdapter;
 import cn.edu.zjut.interview.speech.tts.adapters.Sbv2Adapter;
 import cn.edu.zjut.interview.speech.tts.adapters.Sbv2ApiAdapter;
 import cn.edu.zjut.interview.speech.tts.adapters.VitsAdapter;
@@ -42,10 +45,11 @@ public class TtsService {
      */
     static final int MAX_CONSECUTIVE_FAILURES = 3;
 
-    /** 已接入 8 个引擎。V5c 往这里加，{@code /engines} 的 supported 自动跟着变。 */
+    /** 已接入 11 个引擎。{@code /engines} 的 supported 自动跟着变。 */
     public static final Set<String> SUPPORTED_TYPES = Set.of(
             Sbv2Adapter.TYPE, Sbv2ApiAdapter.TYPE, Bv2Adapter.TYPE, VitsAdapter.TYPE,
-            GsvAdapter.TYPE_GSV, GsvAdapter.TYPE_GPT_SOVITS, FishS2Adapter.TYPE, CosyvoiceAdapter.TYPE);
+            GsvAdapter.TYPE_GSV, GsvAdapter.TYPE_GPT_SOVITS, FishS2Adapter.TYPE, CosyvoiceAdapter.TYPE,
+            AivisAdapter.TYPE, OpenTtsAdapter.TYPE, IndexTts2Adapter.TYPE);
 
     private final TtsSettingsService settingsService;
 
@@ -161,6 +165,9 @@ public class TtsService {
             case GsvAdapter.TYPE_GPT_SOVITS -> new GsvAdapter(settings, GsvAdapter.TYPE_GPT_SOVITS);
             case FishS2Adapter.TYPE -> new FishS2Adapter(settings);
             case CosyvoiceAdapter.TYPE -> new CosyvoiceAdapter(settings);
+            case AivisAdapter.TYPE -> new AivisAdapter(settings);
+            case OpenTtsAdapter.TYPE -> new OpenTtsAdapter(settings);
+            case IndexTts2Adapter.TYPE -> new IndexTts2Adapter(settings);
             default -> {
                 TtsEngineCatalog.Entry entry = TtsEngineCatalog.require(type);
                 throw TtsException.unsupported("引擎 " + entry.type() + "（" + entry.displayName()
