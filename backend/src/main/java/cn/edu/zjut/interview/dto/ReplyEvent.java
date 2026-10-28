@@ -20,10 +20,12 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
  * @param userMessageSeq  触发本轮的用户消息 seq
  * @param senderRoleId    说话角色：null = 旁白 / system，其余为 {@code interviewer.id}
  *                        （对齐 {@code line.sender_role_id}）
+ * @param seq             本句台词的落库 seq，前端用它把 {@code ai:voice} 的语音对上这一句
+ *                        （与 {@link VoiceEvent#seq()} 同源）；剧本链路本批暂为 null
  */
 @JsonPropertyOrder({"type", "isFinal", "duration", "message", "originalMessage", "emotion",
         "originalTag", "motionText", "character", "displayName", "displaySubtitle", "userMessageSeq",
-        "senderRoleId"})
+        "senderRoleId", "seq"})
 public record ReplyEvent(
         String type,
         @JsonProperty("isFinal") boolean isFinal,
@@ -37,7 +39,8 @@ public record ReplyEvent(
         String displayName,
         String displaySubtitle,
         Integer userMessageSeq,
-        Integer senderRoleId) {
+        Integer senderRoleId,
+        Integer seq) {
 
     /** 事件名，规格 §1.2 表格。 */
     public static final String TYPE = "reply";

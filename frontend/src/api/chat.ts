@@ -21,6 +21,20 @@ export interface ReplyEvent {
   userMessageSeq?: number;
   /** 说话角色：0 = 求职者、N = 面试官 id、null = 旁白（后端 ReplyEvent.senderRoleId） */
   senderRoleId?: number | string | null;
+  /**
+   * 本句台词的落库 seq，前端用它把 `ai:voice` 的语音对上这一句（与 VoiceEvent.seq 同源）。
+   * 剧本链路后端填 null，故可空。
+   */
+  seq?: number;
+}
+
+/** `ai:voice` 的 data（后端 VoiceEvent）：某一句台词的语音合成结果。 */
+export interface VoiceEvent {
+  type: string;
+  /** 对应台词的落库 seq，与 `ai:reply.seq` 同源 */
+  seq: number;
+  /** `GET /api/speech/audio/{name}`，内容指纹命名、可缓存 */
+  voiceUrl: string;
 }
 
 /** 一条 SSE 事件（event 名 + 已解析的 data）。 */

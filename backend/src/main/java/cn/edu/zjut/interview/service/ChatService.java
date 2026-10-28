@@ -795,7 +795,9 @@ public class ChatService {
                     interviewer.getName(),
                     interviewer.getDisplayRole(),
                     userSeq,
-                    interviewerRoleId(interviewer));
+                    interviewerRoleId(interviewer),
+                    // 本句落库用的 seq（自增前的 nextSeq）：ai:voice 带的是同一个值，前端靠它对句
+                    seq);
         send(emitter, "ai:reply", event);
         published++;
 

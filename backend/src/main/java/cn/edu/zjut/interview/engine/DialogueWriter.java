@@ -112,7 +112,10 @@ public final class DialogueWriter {
                 name,
                 role,
                 userMessageSeq,
-                ctx.senderRoleId(InterviewMessage.ROLE_ASSISTANT, "text"));
+                ctx.senderRoleId(InterviewMessage.ROLE_ASSISTANT, "text"),
+                // 剧本链路本批不接语音：落库走 ctx.saveMessage，seq 由引擎内部自增、这里取不到，
+                // 故填 null（前端 ai:voice 对句只在自由对话链路生效）
+                null);
         ctx.sink().reply(event);
         published++;
     }

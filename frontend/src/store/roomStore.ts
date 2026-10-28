@@ -24,6 +24,16 @@ export interface RoomLine {
   displayName?: string;
   /** 该句的说话角色 code（由 ai:reply 的 senderRoleId 解析），旁白/玩家句为空 */
   speaker?: string;
+  /**
+   * 后端 `ai:reply` 的 `seq`（本句落库序号），`ai:voice` 靠它对句。
+   * 剧本链路与本地假回复没有这个号，故可空。
+   */
+  seq?: number;
+  /**
+   * 后端 `ai:voice` 给过来的音频地址（`GET /api/speech/audio/{name}`）。
+   * 合成失败 / 未开启 TTS / 剧本链路都为空——空就是本句不出声。
+   */
+  voiceUrl?: string;
 }
 
 /** 剧本选项（script:choice → ChoiceItem）：disabled 项灰显，reason 是作者写的锁定提示。 */

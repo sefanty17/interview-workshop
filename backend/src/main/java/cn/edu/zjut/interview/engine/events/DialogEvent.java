@@ -92,7 +92,10 @@ public class DialogEvent implements ScriptEvent {
                 displayName,
                 displaySubtitle,
                 null,
-                ctx.senderRoleId(InterviewMessage.ROLE_ASSISTANT, "text")));
+                ctx.senderRoleId(InterviewMessage.ROLE_ASSISTANT, "text"),
+                // 剧本链路本批不接语音：seq 由 EngineContext 内部自增、此处拿不到落库序号，
+                // 故填 null；剧本台词的语音留到后续批次
+                null));
     }
 
     /** 原版 {@code .and_then(as_str).unwrap_or(默认值)}：字段存在且是字符串就用它，否则用默认值。 */

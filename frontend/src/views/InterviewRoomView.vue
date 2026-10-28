@@ -125,6 +125,7 @@ import {
   type ReplyEvent,
   type SessionDetail,
   type StreamEvent,
+  type VoiceEvent,
 } from "../api/chat";
 import {
   addRecord,
@@ -148,10 +149,14 @@ import {
 import { attachRoomAudio } from "../store/roomAudio";
 import Icon from "../components/base/widget/Icon.vue";
 import { applyPendingChoice, runScriptStream } from "../composables/useScriptRunner";
+import { useVoicePlayback } from "../composables/useVoicePlayback";
 import { cardForCode, ensureCharactersLoaded } from "../store/characters";
 
 const router = useRouter();
 const route = useRoute();
+
+/** AI 台词的语音播放器（单一 <audio> 复用；剧本台词的语音留到后续批次，本批不接） */
+const playback = useVoicePlayback();
 
 const historyOpen = ref(false);
 const finished = ref(false);
@@ -242,6 +247,16 @@ watch(
     const line = roomStore.lines[roomStore.cursor];
     if (!line?.speaker) return;
     speakAs(line.speaker, line.emotion);
+  },
+);
+// 切句时出声：当前句有语音就播。只做「有声叠加」——语音比文字停留时间长时会被下一句
+// 打断，这是本批刻意的保守做法（播完再推进留到 V6c）
+watch(
+  () => roomStore.cursor,
+  (cursor) => {
+    playback.stop();
+    const url = roomStore.lines[cursor]?.voiceUrl;
+    if (url) playback.play(url);
   },
 );
 watch(
@@ -446,6 +461,10 @@ async function sendToBackend(text: string): Promise<boolean> {
   if (!(await ensureServerSession())) return false;
   const id = sessionId.value as number;
   const buffered: RoomLine[] = [];
+  /** seq（落库序号）→ 该句在 buffered 里的下标，ai:voice 靠它把语音对上句 */
+  const voiceSlot = new Map<number, number>();
+  /** 语音比台词早到（这句还没入队）时先存这里，pushLine 之后统一回填 */
+  const pendingVoices = new Map<number, string>();
   try {
     for await (const ev of sendMessage(id, text)) {
       if (ev.event === "ai:reply") {
@@ -458,7 +477,14 @@ async function sendToBackend(text: string): Promise<boolean> {
           emotion: data.emotion,
           final: data.isFinal,
           speaker: resolveRoleCode(data.senderRoleId) ?? undefined,
+          seq: data.seq,
         });
+        if (data.seq != null) voiceSlot.set(data.seq, buffered.length - 1);
+      } else if (ev.event === "ai:voice") {
+        // 语音是流期间异步补发的，此时这句通常还没入队，先按 seq 存着
+        const data = ev.data as VoiceEvent;
+        if (!data?.voiceUrl || data.seq == null) continue;
+        pendingVoices.set(data.seq, data.voiceUrl);
       } else if (ev.event === "ai:error") {
         console.warn("[interview] ai:error", ev.data);
       }
@@ -477,8 +503,19 @@ async function sendToBackend(text: string): Promise<boolean> {
   }
   const first = roomStore.lines.length;
   buffered.forEach((line) => pushLine(line));
+  // 回填语音：voiceUrl 挂到 roomStore.lines 上，切句时由上面的 cursor watch 播
+  for (const [seq, url] of pendingVoices) {
+    const slot = voiceSlot.get(seq);
+    if (slot === undefined) continue;
+    const line = roomStore.lines[first + slot];
+    if (line) line.voiceUrl = url;
+  }
+  const prevCursor = roomStore.cursor;
   roomStore.cursor = first;
   roomStore.state = "responding";
+  // cursor watch 只在 cursor 变化时才跑；首轮恰好停在同一句时手动补一次
+  const firstVoice = roomStore.lines[first]?.voiceUrl;
+  if (first === prevCursor && firstVoice) playback.play(firstVoice);
 
   store.session.questionIndex += 1;
   persist();
@@ -767,6 +804,7 @@ onBeforeUnmount(() => {
   if (pending) window.clearTimeout(pending);
   disposeViewport?.();
   disposeAudio?.();
+  playback.dispose();
   delete (window as unknown as Record<string, unknown>).__setPresentRoles;
   resetRoom();
   historyOpen.value = false;
