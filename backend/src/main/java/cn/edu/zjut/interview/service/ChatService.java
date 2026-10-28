@@ -13,6 +13,7 @@ import cn.edu.zjut.interview.dto.CreateSessionRequest;
 import cn.edu.zjut.interview.dto.CreateSessionResponse;
 import cn.edu.zjut.interview.dto.ReplyEvent;
 import cn.edu.zjut.interview.dto.SessionMessageView;
+import cn.edu.zjut.interview.dto.VoiceEvent;
 import cn.edu.zjut.interview.dto.KnowledgeHit;
 import cn.edu.zjut.interview.god.GodAgentCore;
 import cn.edu.zjut.interview.god.SpeakerSelector;
@@ -34,6 +35,7 @@ import cn.edu.zjut.interview.repository.UserProfileRepository;
 import cn.edu.zjut.interview.stream.EmotionDictionary;
 import cn.edu.zjut.interview.stream.EmotionSegment;
 import cn.edu.zjut.interview.stream.SentenceSplitter;
+import cn.edu.zjut.interview.speech.tts.TtsVoiceService;
 import cn.edu.zjut.interview.stream.SymbolParser;
 import cn.edu.zjut.interview.worldbook.Worldbook;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -119,6 +121,14 @@ public class ChatService {
     /** 上一轮台词条数越界时的纠偏文案，注入下一轮后取走即弃。 */
     private final Map<Long, String> pendingCorrection = new ConcurrentHashMap<>();
 
+    /**
+     * 台词语音（V6a）：把每句正文合成成音频并补发 {@code ai:voice} 事件。
+     *
+     * <p>可以在单测里传 {@code null}（构造器不做非空校验）：{@code publish} 里判空后跳过整段，
+     * 这样「只想测对话链路」的用例不必为 TTS 准备设置。
+     */
+    private final TtsVoiceService ttsVoiceService;
+
     /** 已验收的拼装/分句组件，直接复用，不复制逻辑。 */
     private final MemoryBuilder memoryBuilder = new MemoryBuilder();
     private final SymbolParser symbolParser = new SymbolParser();
@@ -160,7 +170,8 @@ public class ChatService {
                        PlayerIdentityService playerIdentities,
                        InterviewerRelationService interviewerRelations,
                        GodAgentCore godAgent,
-                       KnowledgeInjector knowledgeInjector) {
+                       KnowledgeInjector knowledgeInjector,
+                       TtsVoiceService ttsVoiceService) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.interviewerRepository = interviewerRepository;
@@ -175,6 +186,7 @@ public class ChatService {
         this.interviewerRelations = interviewerRelations;
         this.godAgent = godAgent;
         this.knowledgeInjector = knowledgeInjector;
+        this.ttsVoiceService = ttsVoiceService;
     }
 
     @PreDestroy
@@ -761,12 +773,14 @@ public class ChatService {
                 return;
             }
 
-            saveMessage(session.getId(), nextSeq++, InterviewMessage.ROLE_ASSISTANT,
-                    segment.followingText(), segment.originalTag(), segment.predicted(), segment.motionText(),
-                    interviewerRoleId(interviewer),
-                    // 思考链只挂最终句（generator/mod.rs:698-705）
-                    isFinal ? thinking : null,
-                    interviewer.getName());
+        // 本句 seq：自增前的值才是它，落库与 ai:voice 用同一个，前端才能对上句
+        int seq = nextSeq;
+        saveMessage(session.getId(), nextSeq++, InterviewMessage.ROLE_ASSISTANT,
+                segment.followingText(), segment.originalTag(), segment.predicted(), segment.motionText(),
+                interviewerRoleId(interviewer),
+                // 思考链只挂最终句（generator/mod.rs:698-705）
+                isFinal ? thinking : null,
+                interviewer.getName());
 
             ReplyEvent event = new ReplyEvent(
                     ReplyEvent.TYPE,
@@ -782,9 +796,30 @@ public class ChatService {
                     interviewer.getDisplayRole(),
                     userSeq,
                     interviewerRoleId(interviewer));
-            send(emitter, "ai:reply", event);
-            published++;
+        send(emitter, "ai:reply", event);
+        published++;
+
+        // 语音：合成是几百毫秒的 HTTP 往返，同步做会把首字延迟推到用户能感知的程度，
+        // 所以丢到 executor 上异步跑（复用 SSE 那个池，不为语音再开线程池），
+        // 合成完单独补发一个 ai:voice —— 不能塞进 ai:reply，那时 URL 还没生成。
+        // 情绪用 segment.originalTag()：与上面 ai:reply 发给前端的 originalTag 同源，
+        // 适配器那边认的就是模型原样输出的情绪词。
+        // 失败静默：TtsVoiceService 内部已经 catch 成 empty，这里再兜一层以防线程池本身抛异常。
+        // TTS 出问题的表现只允许是「这一句没声音」，不允许是「对话断了」。
+        if (ttsVoiceService != null) {
+            String voiceText = segment.followingText();
+            String voiceEmo = segment.originalTag();
+            executor.submit(() -> {
+                try {
+                    ttsVoiceService.synthesize(voiceText, voiceEmo)
+                            .ifPresent(url -> send(emitter, VoiceEvent.EVENT,
+                                    new VoiceEvent(VoiceEvent.TYPE, seq, url)));
+                } catch (RuntimeException e) {
+                    log.debug("[ChatService] 语音合成任务异常，本句不出声：{}", e.toString());
+                }
+            });
         }
+    }
 
         /** 模型没写 {@code 【情绪】} 时的兜底：剥标签 + 情绪「正常」，保证前端一定有台词。 */
         private EmotionSegment fallbackSegment(String original) {
