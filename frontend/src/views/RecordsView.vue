@@ -329,9 +329,21 @@ async function loadRemoteRecords() {
     remoteRecords.value = sessions.map(toRecord);
     remoteSummaries.clear();
     sessions.forEach((summary) => remoteSummaries.set("s-" + summary.id, summary));
+    pruneDuplicateLocalRecords(new Set(sessions.map((s) => s.id)));
   } catch (error) {
     console.warn("[records] 拉取后端场次失败，只用本地记录", error);
   }
+}
+
+/**
+ * 清掉旧版本留下的重复本地存档：本地记录只要带着后端场次 id，就说明这一场后端已有记录，
+ * 本地那份是当初 finish() 额外写的 mock 分副本（典型表现是每场面试多出一条 86 分记录）。
+ */
+function pruneDuplicateLocalRecords(remoteIds: Set<number>) {
+  const kept = store.records.filter((r) => !(r.sessionId && remoteIds.has(r.sessionId)));
+  if (kept.length === store.records.length) return;
+  store.records.splice(0, store.records.length, ...kept);
+  persist();
 }
 
 /** 成长曲线/提升路径：后端没起来就整块不显示，避免拿本地 mock 分数糊一条假的趋势 */
@@ -350,8 +362,9 @@ async function loadTrend() {
 function toRecord(summary: SessionSummary): InterviewRecord {
   return {
     id: "s-" + summary.id,
-    jobName: summary.title,
-    personaName: summary.interviewerCode ?? "-",
+    // 岗位/面试官按场次字段映射成中文名，别直接拿后端 title（那是「姓名 · 岗位 code」拼的）
+    jobName: jobs.find((j) => j.id === summary.jobCode)?.name ?? summary.title,
+    personaName: findInterviewer(summary.interviewerCode)?.name ?? summary.interviewerCode ?? "-",
     date: summary.endedAt ?? summary.startedAt ?? "-",
     duration: "-",
     score: summary.score ?? 0,

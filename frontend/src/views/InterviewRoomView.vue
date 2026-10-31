@@ -112,6 +112,7 @@ import ToolActivityStatus from "../components/tools/ToolActivityStatus.vue";
 import FullAccessWarning from "../components/tools/FullAccessWarning.vue";
 import { dimensionNames, jobs, questions as questionBank, type InterviewRecord } from "../data/mock";
 import { findInterviewer } from "../data/interviewers";
+import { findScript } from "../data/scripts";
 import { alertDialog, confirmDialog } from "../store/dialogStore";
 import {
   createSession,
@@ -404,11 +405,16 @@ async function ensureServerSession(): Promise<boolean> {
   if (!(await isBackendUp())) return false;
   try {
     // 剧本模式带上「剧本冒险」里选中的剧本 code；自由模式不传（后端不再按岗位自动绑剧本）
-    const scriptCode =
-      store.session.mode === "script" ? localStorage.getItem("bondScript") || undefined : undefined;
+    const scriptMode = store.session.mode === "script";
+    const scriptCode = scriptMode ? localStorage.getItem("bondScript") || undefined : undefined;
+    const bond = scriptCode
+      ? store.scripts.find((s) => s.code === scriptCode) ?? findScript(scriptCode)
+      : undefined;
     const result = await createSession({
-      interviewerCode: store.settings.personaId,
-      jobId: store.settings.jobId,
+      // 剧本场次以本场选择为准：岗位跟剧本 job_code，面试官用「剧本冒险」里选的角色；
+      // 否则后端会落成设置页里的全局岗位/面试官（典型表现为打了前端剧本却显示 java/风雪）。
+      interviewerCode: scriptMode ? store.session.personaId : store.settings.personaId,
+      jobId: scriptMode ? bond?.job_code ?? store.session.jobId : store.settings.jobId,
       scriptCode,
     });
     sessionId.value = result.sessionId;
@@ -703,10 +709,17 @@ async function finish() {
 
   // clearSession() 会清掉本地会话缓存，先把场次 id 取出来，跳转时要拼进 ?sid=
   const sid = sessionId.value;
+  clearSession();
+
+  // 后端已建场次：记录由后端统一提供，本地不再写一份，否则「面试记录」里同一场会出现两条
+  // （一条后端真实场次、一条本地 mock 分条目）。作答不足 3 轮时带 noeval=1，报告页不跑 AI 评估，分数保持 0。
+  if (sid !== null) {
+    router.push(`/report/s-${sid}?sid=${sid}${tooShort ? "&noeval=1" : ""}`);
+    return;
+  }
+
   const record: InterviewRecord = {
     id: `r-${Date.now()}`,
-    // 作答轮次不足的场次不带 sid：报告页不会再去后端跑 AI 评估，分数保持 0
-    sessionId: tooShort ? undefined : sid ?? undefined,
     jobName: job.value.name,
     personaName: `${persona.value.name} · ${persona.value.displayRole}`,
     date: new Date().toLocaleString("zh-CN", { hour12: false }).replace(/\//g, "-"),
@@ -729,8 +742,7 @@ async function finish() {
   };
 
   addRecord(record);
-  clearSession();
-  router.push(record.sessionId ? `/report/${record.id}?sid=${record.sessionId}` : `/report/${record.id}`);
+  router.push(`/report/${record.id}`);
 }
 
 /** 把 session.messages 还原成房间句子队列（刷新/挂载恢复）

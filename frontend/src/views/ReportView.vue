@@ -24,7 +24,7 @@
               </div>
             </div>
             <div class="mt-3 text-center text-xs text-white/40">
-              {{ record.questions.length }} 题 · {{ record.duration }}
+              {{ questionCount }} 题 · {{ record.duration }}
             </div>
             <div v-if="evalLoading" class="mt-2 text-center text-xs text-white/50">AI 评估生成中…</div>
             <div v-else-if="evalError" class="mt-2 text-center text-xs text-red-400">
@@ -119,6 +119,8 @@ import { useRoute, useRouter } from "vue-router";
 import PageShell from "../components/ui/PageShell.vue";
 import MenuItem from "../components/settings/MenuItem.vue";
 import RadarChart from "../components/ui/RadarChart.vue";
+import { jobs } from "../data/mock";
+import { findInterviewer } from "../data/interviewers";
 import { store } from "../store/appStore";
 import { fetchEvaluation, runEvaluation, type EvaluationResult } from "../api/evaluation";
 import { fetchSessionDetail } from "../api/chat";
@@ -129,10 +131,15 @@ const router = useRouter();
 
 /** 后端场次（记录页 id 形如 s-12）在本地 store.records 里没有条目，按 ?sid= 拉详情兜底 */
 const remoteRecord = ref<InterviewRecord | null>(null);
+/** 后端场次没有逐题明细，题数用详情里的玩家发言条数还原 */
+const remoteQuestionCount = ref(0);
 
 const record = computed(
   () => store.records.find((r) => String(r.id) === String(route.params.id)) ?? remoteRecord.value,
 );
+
+/** ?noeval=1：作答不足 3 轮的场次，报告页不跑 AI 评估，分数保持 0 */
+const skipEval = computed(() => route.query.noeval === "1");
 
 /** ?sid= 是后端场次 id（本地 record.id 与它是两套号，评估按 sid 查） */
 const sid = computed(() => {
@@ -150,10 +157,13 @@ async function loadRemoteRecord() {
   if (id === null || record.value) return;
   try {
     const detail = await fetchSessionDetail(id);
+    // 玩家发言条数 = 实际作答轮次（剧本/自由都按 role=user 记账）
+    remoteQuestionCount.value = detail.messages.filter((m) => m.role === "user").length;
     remoteRecord.value = {
       id: `s-${id}`,
-      jobName: detail.title,
-      personaName: detail.interviewerCode ?? "-",
+      // 报告头部按场次真实字段还原：岗位显示中文名、面试官显示姓名，而不是库里的 code
+      jobName: jobs.find((j) => j.id === detail.jobCode)?.name ?? detail.title,
+      personaName: findInterviewer(detail.interviewerCode)?.name ?? detail.interviewerCode ?? "-",
       date: "-",
       duration: "-",
       score: detail.score ?? 0,
@@ -177,7 +187,7 @@ const evalError = ref("");
  */
 async function loadEvaluation() {
   const id = sid.value;
-  if (id === null) return;
+  if (id === null || skipEval.value) return;
   evalLoading.value = true;
   evalError.value = "";
   try {
@@ -199,6 +209,10 @@ onMounted(async () => {
 // ── 以下是「评估优先、本地兜底」：有评估用评估，没有完全退回读 store.records 的旧行为 ──
 
 const score = computed(() => evaluation.value?.overallScore ?? record.value?.score ?? 0);
+/** 本地存档有逐题明细；后端场次按详情里的玩家发言数还原题数 */
+const questionCount = computed(
+  () => (record.value?.questions.length ?? 0) || remoteQuestionCount.value,
+);
 
 const radarLabels = computed(() => {
   const ev = evaluation.value;

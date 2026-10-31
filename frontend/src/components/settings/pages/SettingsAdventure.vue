@@ -377,10 +377,12 @@ function startBond(): void {
   if (!canStartBond.value) return;
   localStorage.setItem("bondCharacter", bondCharacter.value);
   localStorage.setItem("bondScript", bondScript.value);
-  const name = findScript(bondScript.value)?.script_name ?? "未命名剧本";
+  const script = scripts.value.find((s) => s.code === bondScript.value) ?? findScript(bondScript.value);
+  const name = script?.script_name ?? "未命名剧本";
   // 正式剧本面试：mode=script 会让房间把 bondScript 带进 createSession（script_id 落库），
-  // 结束后可评估、能进成长曲线（试玩是 preview 场次，退出即删、不产生数据）
-  startSession(store.settings.jobId, bondCharacter.value as InterviewerCode, "script");
+  // 结束后可评估、能进成长曲线（试玩是 preview 场次，退出即删、不产生数据）。
+  // 岗位跟剧本走（剧本自带 job_code），面试官用这里选的角色，避免后端落成默认 java/strict。
+  startSession(script?.job_code ?? store.settings.jobId, bondCharacter.value as InterviewerCode, "script");
   notify(`已开始剧本「${name}」`);
   router.push("/interview");
 }
