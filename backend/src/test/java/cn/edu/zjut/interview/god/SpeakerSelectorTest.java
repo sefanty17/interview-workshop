@@ -70,8 +70,8 @@ class SpeakerSelectorTest {
     void payloadListsNpcsAndDialog() {
         InterviewMessage line = new InterviewMessage();
         line.setRole(InterviewMessage.ROLE_USER);
-        line.setContent("我叫蔡智豪");
-        line.setDisplayName("蔡智豪");
+        line.setContent("我叫候选人");
+        line.setDisplayName("候选人");
         line.setSenderRoleId(InterviewMessage.PLAYER_ROLE_ID);
 
         SpeakerSelector.SpeakerView view = new SpeakerSelector.SpeakerView(
@@ -81,7 +81,7 @@ class SpeakerSelectorTest {
 
         assertTrue(payload.startsWith("【当前在场的非玩家角色列表】"));
         assertTrue(payload.contains("- role_id=3: 风雪"));
-        assertTrue(payload.contains("[role_id=0] 蔡智豪: 我叫蔡智豪"), "玩家行带 role_id=0");
+        assertTrue(payload.contains("[role_id=0] 候选人: 我叫候选人"), "玩家行带 role_id=0");
         assertTrue(payload.contains("当前发言者是「玩家」。请选择下一个发言的 NPC 角色。"));
     }
 

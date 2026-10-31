@@ -316,6 +316,14 @@ export async function fetchSessions(status?: string): Promise<SessionSummary[]> 
   return (await response.json()) as SessionSummary[];
 }
 
+/** 删除一场后端面试（连带台词与评估），记录页批量删除用。 */
+export async function deleteSession(sessionId: number): Promise<void> {
+  const response = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`deleteSession 失败：HTTP ${response.status}`);
+  }
+}
+
 /**
  * 回溯对话：删掉第 `seq` 条用户消息及其之后的全部台词，返回剩余台词。
  *

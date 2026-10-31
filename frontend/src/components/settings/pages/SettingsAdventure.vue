@@ -339,12 +339,13 @@ import LcModal from "../../ui/LcModal.vue";
 import AdventurePanel from "./Adeventure/AdventurePanel.vue";
 import type { InterviewScript } from "../../../data/scripts";
 import { seedScripts, findScript } from "../../../data/scripts";
-import { interviewers, findInterviewer, avatarUrl } from "../../../data/interviewers";
+import { interviewers, findInterviewer, avatarUrl, type InterviewerCode } from "../../../data/interviewers";
 import { importScriptZip, ScriptImportError, type ImportResult } from "../../../api/scripts";
 import {
   createScript,
   notify,
   persist,
+  startSession,
   store,
 } from "../../../store/appStore";
 import { alertDialog } from "../../../store/dialogStore";
@@ -377,8 +378,11 @@ function startBond(): void {
   localStorage.setItem("bondCharacter", bondCharacter.value);
   localStorage.setItem("bondScript", bondScript.value);
   const name = findScript(bondScript.value)?.script_name ?? "未命名剧本";
-  notify(`即将开始剧本「${name}」`);
-  router.push("/script-editor");
+  // 正式剧本面试：mode=script 会让房间把 bondScript 带进 createSession（script_id 落库），
+  // 结束后可评估、能进成长曲线（试玩是 preview 场次，退出即删、不产生数据）
+  startSession(store.settings.jobId, bondCharacter.value as InterviewerCode, "script");
+  notify(`已开始剧本「${name}」`);
+  router.push("/interview");
 }
 
 // ---------- 创意工坊 / 创建剧本 入口 ----------

@@ -1,4 +1,4 @@
-import { chromium } from "file:///C:/Users/蔡智豪/.workbuddy/binaries/node/workspace/node_modules/playwright/index.mjs";
+import { chromium } from "file:///C:/Users/候选人/.workbuddy/binaries/node/workspace/node_modules/playwright/index.mjs";
 import path from "node:path";
 
 const OUT = "D:/cxdownload/javaee课设/screenshots/b6/memory";
