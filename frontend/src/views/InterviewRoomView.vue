@@ -112,7 +112,7 @@ import ToolActivityStatus from "../components/tools/ToolActivityStatus.vue";
 import FullAccessWarning from "../components/tools/FullAccessWarning.vue";
 import { dimensionNames, jobs, questions as questionBank, type InterviewRecord } from "../data/mock";
 import { findInterviewer } from "../data/interviewers";
-import { confirmDialog } from "../store/dialogStore";
+import { alertDialog, confirmDialog } from "../store/dialogStore";
 import {
   createSession,
   fetchSessionDetail,
@@ -537,7 +537,16 @@ async function runScript(stream: AsyncGenerator<StreamEvent>): Promise<boolean> 
     onChapter: (c) => (scriptChapter.value = c),
     onProgress: (p) => (scriptProgressPct.value = p),
     onEnd: () => (autoFinish.value = true),
-    onError: (payload) => console.warn("[interview] ai:error", payload),
+    onError: (payload) => {
+      console.warn("[interview] ai:error", payload);
+      // 剧本推进出错时后端不会再给台词：必须自己退出「思考中」，并告诉用户原因
+      roomStore.state = "input";
+      const detail =
+        typeof payload === "string"
+          ? payload
+          : (payload as { message?: string } | null)?.message ?? "后端剧本推进失败";
+      void alertDialog("面试中断", detail);
+    },
   });
 }
 
@@ -667,23 +676,26 @@ async function finish() {
   if (pending) window.clearTimeout(pending);
 
   const pool = questionPool.value;
-  const total = Math.max(1, answeredCount.value);
+  // 有效作答轮次；不足 3 轮视为无效面试，分数一律 0（不再给 79+n%4 的假分）
+  const answeredTurns = answeredCount.value;
+  const tooShort = answeredTurns < 3;
+  const total = tooShort ? 0 : Math.max(1, answeredTurns);
   // 自由面试题库会循环，按取模还原实际问过的题序
   const answered = Array.from({ length: total }, (_, i) => pool[isScript.value ? i : i % (pool.length || 1)])
     .filter((q): q is (typeof questionBank)[number] => !!q);
   const base = 79 + (answered.length % 4);
   const dims = dimensionNames.map((name, i) => ({
     name,
-    score: clamp(base + [5, -3, 7, 8, 1][i]),
+    score: tooShort ? 0 : clamp(base + [5, -3, 7, 8, 1][i]),
   }));
-  const mockScore = clamp(dims.reduce((sum, d) => sum + d.score, 0) / dims.length);
+  const mockScore = tooShort ? 0 : clamp(dims.reduce((sum, d) => sum + d.score, 0) / dims.length);
 
   // 后端在线 → 用后端算出的总分；调用失败则退回本地 mock 分数（降级不能删）
   let score = mockScore;
   if (sessionId.value !== null) {
     try {
       const result = await finishSession(sessionId.value);
-      if (typeof result.score === "number") score = clamp(result.score);
+      if (typeof result.score === "number" && !tooShort) score = clamp(result.score);
     } catch (error) {
       console.warn("[interview] 结束场次失败，沿用本地分数", error);
     }
@@ -693,7 +705,8 @@ async function finish() {
   const sid = sessionId.value;
   const record: InterviewRecord = {
     id: `r-${Date.now()}`,
-    sessionId: sid ?? undefined,
+    // 作答轮次不足的场次不带 sid：报告页不会再去后端跑 AI 评估，分数保持 0
+    sessionId: tooShort ? undefined : sid ?? undefined,
     jobName: job.value.name,
     personaName: `${persona.value.name} · ${persona.value.displayRole}`,
     date: new Date().toLocaleString("zh-CN", { hour12: false }).replace(/\//g, "-"),
@@ -717,7 +730,7 @@ async function finish() {
 
   addRecord(record);
   clearSession();
-  router.push(sid ? `/report/${record.id}?sid=${sid}` : `/report/${record.id}`);
+  router.push(record.sessionId ? `/report/${record.id}?sid=${record.sessionId}` : `/report/${record.id}`);
 }
 
 /** 把 session.messages 还原成房间句子队列（刷新/挂载恢复）

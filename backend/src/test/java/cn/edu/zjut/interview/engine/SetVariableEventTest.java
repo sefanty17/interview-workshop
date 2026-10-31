@@ -36,7 +36,7 @@ class SetVariableEventTest {
                  "options": [{"actions": [
                     {"type": "set_var", "content": "count += 1"},
                     {"type": "set_var", "content": "flag = true"},
-                    {"type": "set_var", "content": "name = \\"蔡智豪\\""}
+                    {"type": "set_var", "content": "name = \\"候选人\\""}
                  ]}]}
                 """, vars));
 
@@ -44,7 +44,7 @@ class SetVariableEventTest {
         assertEquals(1, vars.path("count").asInt());
         assertTrue(vars.path("count").isIntegralNumber(), "整数加法必须保持整数（1 而不是 1.0）");
         assertTrue(vars.path("flag").asBoolean());
-        assertEquals("蔡智豪", vars.path("name").asText());
+        assertEquals("候选人", vars.path("name").asText());
         verifyNoInteractions(sink);
     }
 

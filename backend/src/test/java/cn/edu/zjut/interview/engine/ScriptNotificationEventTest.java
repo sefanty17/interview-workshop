@@ -77,11 +77,11 @@ class ScriptNotificationEventTest {
     @Test
     void playerKeepsAuthorDisplayNameAndOmitsDuration() throws Exception {
         new PlayerEvent().execute(ctx("""
-                {"type": "player", "text": "……", "displayName": "蔡智豪"}
+                {"type": "player", "text": "……", "displayName": "候选人"}
                 """));
 
         JsonNode data = sentData(0);
-        assertEquals("蔡智豪", data.path("displayName").asText());
+        assertEquals("候选人", data.path("displayName").asText());
         assertFalse(data.has("duration"), "没写 duration 就不序列化");
         assertEquals(2, data.size());
     }

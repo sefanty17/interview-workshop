@@ -121,18 +121,50 @@ import MenuItem from "../components/settings/MenuItem.vue";
 import RadarChart from "../components/ui/RadarChart.vue";
 import { store } from "../store/appStore";
 import { fetchEvaluation, runEvaluation, type EvaluationResult } from "../api/evaluation";
+import { fetchSessionDetail } from "../api/chat";
+import type { InterviewRecord } from "../data/mock";
 
 const route = useRoute();
 const router = useRouter();
 
-const record = computed(() => store.records.find((r) => String(r.id) === String(route.params.id)));
+/** 后端场次（记录页 id 形如 s-12）在本地 store.records 里没有条目，按 ?sid= 拉详情兜底 */
+const remoteRecord = ref<InterviewRecord | null>(null);
 
-// ?sid= 是后端场次 id（本地 record.id 与它是两套号，评估按 sid 查）
+const record = computed(
+  () => store.records.find((r) => String(r.id) === String(route.params.id)) ?? remoteRecord.value,
+);
+
+/** ?sid= 是后端场次 id（本地 record.id 与它是两套号，评估按 sid 查） */
 const sid = computed(() => {
   const raw = route.query.sid;
   const n = typeof raw === "string" ? Number(raw) : NaN;
   return Number.isInteger(n) && n > 0 ? n : null;
 });
+
+/**
+ * 本地没有这条记录（历史后端场次）时，用后端详情拼一份只读记录：
+ * 逐题明细没有，模板会显示「本场没有逐题记录」，分数/维度仍走评估。
+ */
+async function loadRemoteRecord() {
+  const id = sid.value;
+  if (id === null || record.value) return;
+  try {
+    const detail = await fetchSessionDetail(id);
+    remoteRecord.value = {
+      id: `s-${id}`,
+      jobName: detail.title,
+      personaName: detail.interviewerCode ?? "-",
+      date: "-",
+      duration: "-",
+      score: detail.score ?? 0,
+      dimensions: [],
+      questions: [],
+      advice: [],
+    };
+  } catch (e) {
+    console.warn("[report] 拉取场次详情失败", e);
+  }
+}
 
 const evaluation = ref<EvaluationResult | null>(null);
 const evalLoading = ref(false);
@@ -159,7 +191,10 @@ async function loadEvaluation() {
   }
 }
 
-onMounted(loadEvaluation);
+onMounted(async () => {
+  await loadRemoteRecord();
+  await loadEvaluation();
+});
 
 // ── 以下是「评估优先、本地兜底」：有评估用评估，没有完全退回读 store.records 的旧行为 ──
 

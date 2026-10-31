@@ -42,7 +42,7 @@ class ScriptFunctionsTest {
 
     @Test
     void replacesPlayerPlaceholder() {
-        assertEquals("你好，蔡智豪", ScriptFunctions.replacePlaceholder("你好，%player%", "蔡智豪"));
-        assertEquals("没有占位符", ScriptFunctions.replacePlaceholder("没有占位符", "蔡智豪"));
+        assertEquals("你好，候选人", ScriptFunctions.replacePlaceholder("你好，%player%", "候选人"));
+        assertEquals("没有占位符", ScriptFunctions.replacePlaceholder("没有占位符", "候选人"));
     }
 }
