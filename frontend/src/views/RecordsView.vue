@@ -25,7 +25,21 @@
     </MenuItem>
 
     <MenuItem v-if="records.length" size="large" title="历史面试" icon="▤">
-      <div class="mb-4 flex flex-wrap items-center justify-end gap-2">
+      <div class="mb-4 flex flex-wrap items-center gap-2">
+        <div class="mr-auto flex flex-wrap gap-2">
+          <button
+            v-for="tab in kindTabs"
+            :key="tab.value"
+            class="cursor-pointer rounded-full border px-4 py-1.5 text-xs font-bold transition-colors"
+            :class="kindFilter === tab.value
+              ? 'border-[#79d9ff]/60 bg-[#79d9ff]/15 text-[#79d9ff]'
+              : 'border-white/15 bg-white/5 text-white/55 hover:bg-white/10'"
+            @click="setKind(tab.value)"
+          >
+            {{ tab.label }}
+            <span class="ml-1 font-mono text-[10px] opacity-70">{{ tab.count }}</span>
+          </button>
+        </div>
         <button
           v-if="!batchMode"
           class="cursor-pointer rounded-full border border-red-500/40 bg-red-500/15 px-4 py-1.5 text-xs font-bold text-red-300 transition-colors hover:bg-red-500/25"
@@ -34,7 +48,7 @@
           批量删除
         </button>
         <template v-else>
-          <span class="mr-auto text-xs text-white/50">已选 {{ selected.size }} / {{ records.length }}</span>
+          <span class="mr-auto text-xs text-white/50">已选 {{ selected.size }} / {{ filteredRecords.length }}</span>
           <button
             class="cursor-pointer rounded-full border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-bold text-white/70 transition-colors hover:bg-white/10"
             @click="toggleSelectAll"
@@ -56,9 +70,12 @@
           </button>
         </template>
       </div>
-      <div class="grid auto-rows-fr grid-cols-1 gap-4 md:grid-cols-2">
+      <p v-if="!filteredRecords.length" class="py-12 text-center text-sm text-white/40">
+        暂无{{ kindLabel }}记录
+      </p>
+      <div v-else class="grid auto-rows-fr grid-cols-1 gap-4 md:grid-cols-2">
         <div
-          v-for="(r, i) in records"
+          v-for="(r, i) in filteredRecords"
           :key="r.id"
           class="flex h-full flex-col rounded-xl border bg-white/[0.05] p-4 transition-all duration-300"
           :class="batchMode && selected.has(r.id)
@@ -85,7 +102,7 @@
           <div class="my-2 border-b border-dashed border-white/10"></div>
 
           <div class="flex items-baseline gap-2">
-            <template v-if="isFreeSession(r.id)">
+            <template v-if="sessionKind(r) === 'free'">
               <span class="text-base font-bold text-white/75">自由对话</span>
               <span class="text-xs text-white/50">不计分 · 不进成长曲线</span>
             </template>
@@ -96,7 +113,7 @@
           </div>
 
           <p class="mt-2 line-clamp-2 text-xs italic text-white/40">
-            {{ isFreeSession(r.id) ? "自由对话场次只保留对话记录，没有评分与逐题复盘。" : excerpt(r) }}
+            {{ sessionKind(r) === "free" ? "自由对话场次只保留对话记录，没有评分与逐题复盘。" : excerpt(r) }}
           </p>
 
           <div v-if="!batchMode" class="mt-auto flex flex-wrap gap-2 pt-3">
@@ -210,10 +227,45 @@ const remoteSummaries = new Map<string, SessionSummary>();
 
 const records = computed(() => [...store.records, ...remoteRecords.value]);
 
+// ── 分类：剧本面试 / 自由面试 ──
+/** 后端场次看 scriptCode，本地存档（没建后端场次时写的那份）只有剧本形态 */
+type SessionKind = "script" | "free";
+type KindFilter = "all" | SessionKind;
+
+const kindFilter = ref<KindFilter>("all");
+
+function countOf(kind: SessionKind): number {
+  return records.value.filter((r) => sessionKind(r) === kind).length;
+}
+
+const kindTabs = computed(() => [
+  { value: "all" as KindFilter, label: "全部", count: records.value.length },
+  { value: "script" as KindFilter, label: "剧本面试", count: countOf("script") },
+  { value: "free" as KindFilter, label: "自由面试", count: countOf("free") },
+]);
+
+const kindLabel = computed(() =>
+  kindFilter.value === "free" ? "自由面试" : kindFilter.value === "script" ? "剧本面试" : "",
+);
+
+const filteredRecords = computed(() =>
+  kindFilter.value === "all"
+    ? records.value
+    : records.value.filter((r) => sessionKind(r) === kindFilter.value),
+);
+
+/** 换分类时清空勾选：批量操作只对当前可见列表生效 */
+function setKind(kind: KindFilter) {
+  kindFilter.value = kind;
+  selected.value = new Set();
+}
+
 // ── 批量删除：进入选择态后每张卡片前出现勾选框，按 id 记录选中项 ──
 const batchMode = ref(false);
 const selected = ref<Set<string>>(new Set());
-const allSelected = computed(() => records.value.length > 0 && selected.value.size === records.value.length);
+const allSelected = computed(
+  () => filteredRecords.value.length > 0 && filteredRecords.value.every((r) => selected.value.has(r.id)),
+);
 
 function enterBatch() {
   batchMode.value = true;
@@ -233,7 +285,7 @@ function toggle(id: string) {
 }
 
 function toggleSelectAll() {
-  selected.value = allSelected.value ? new Set() : new Set(records.value.map((r) => r.id));
+  selected.value = allSelected.value ? new Set() : new Set(filteredRecords.value.map((r) => r.id));
 }
 
 /** 本地记录删存档；后端场次调 DELETE 真删（连同台词与评估一起清） */
@@ -387,10 +439,11 @@ function isRemote(r: InterviewRecord): boolean {
   return r.id.startsWith("s-");
 }
 
-/** 后端场次 summary.scriptCode 为空即自由对话：不计分、不进成长曲线 */
-function isFreeSession(id: string): boolean {
-  const summary = remoteSummaries.get(id);
-  return !!summary && !summary.scriptCode;
+/** 后端场次 summary.scriptCode 为空即自由对话；本地存档没有这个字段，按剧本面试算 */
+function sessionKind(r: InterviewRecord): SessionKind {
+  if (!isRemote(r)) return "script";
+  const summary = remoteSummaries.get(r.id);
+  return summary && !summary.scriptCode ? "free" : "script";
 }
 
 onBeforeUnmount(() => {
