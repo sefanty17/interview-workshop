@@ -150,6 +150,7 @@ import { attachRoomAudio } from "../store/roomAudio";
 import Icon from "../components/base/widget/Icon.vue";
 import { applyPendingChoice, runScriptStream } from "../composables/useScriptRunner";
 import { useVoicePlayback } from "../composables/useVoicePlayback";
+import { setAsrSessionContext } from "../composables/asr";
 import { cardForCode, ensureCharactersLoaded } from "../store/characters";
 
 const router = useRouter();
@@ -388,6 +389,8 @@ let pending: number | undefined;
 
 // ───────────────────── 真后端（B3）：会话 id 与降级开关 ─────────────────────
 const sessionId = ref<number | null>(null);
+/** 录音落盘要按「场次/轮次」命名：场次 ID 变化时同步给 ASR（换场次轮次归零）。 */
+watch(sessionId, (id) => setAsrSessionContext(id), { immediate: true });
 
 /** 本场绑定的剧本 code；null = 自由对话。决定用户发言走 /script/input 还是 /messages */
 const boundScriptCode = ref<string | null>(null);

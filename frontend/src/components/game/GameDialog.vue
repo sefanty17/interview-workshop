@@ -69,6 +69,7 @@
                   type="nav"
                   icon="mic"
                   :title="micTitle"
+                  :disabled="micDisabled"
                   :class="phase === 'recording' ? 'text-cyan-300 animate-pulse' : ''"
                   @pointerdown="pttDown"
                   @pointerup="pttUp"
@@ -145,6 +146,8 @@ import { alertDialog } from "../../store/dialogStore";
 import { notify, persist, store as appStore } from "../../store/appStore";
 import { advance, isShowableLine, roomStore, type RoomLine } from "../../store/roomStore";
 import {
+  asrOffline,
+  asrSupported,
   registerAsrInputBridge,
   setChatMounted,
   useAsrAutoSend,
@@ -363,13 +366,17 @@ const asr = useAsrInput();
 /** 录音相位（idle / recording / recognizing）。ref 在模板里自动解包，脚本里要 .value */
 const { phase } = asr;
 
-const micTitle = computed(() =>
-  phase.value === "recording"
+const micTitle = computed(() => {
+  if (!asrSupported.value) return "当前浏览器不支持语音输入";
+  if (asrOffline.value) return "已断网，语音输入不可用";
+  return phase.value === "recording"
     ? "松开结束"
     : phase.value === "recognizing"
       ? "识别中…"
-      : "按住说话（F8）",
-);
+      : "按住说话（F8）";
+});
+/** 断网或浏览器没有 getUserMedia 时 mic 按钮必须真的禁用，而不是点了没反应。 */
+const micDisabled = computed(() => asrOffline.value || !asrSupported.value);
 
 /** 把识别文本填进输入框并聚焦（用户可直接改完再回车） */
 function fillFromAsr(text: string): void {

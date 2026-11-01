@@ -1,6 +1,6 @@
 import { computed } from "vue";
 
-import { asrLockedUntil, runtime, voicePlaying } from "./state";
+import { asrLockedUntil, asrOffline, asrSupported, runtime, voicePlaying } from "./state";
 import { roomStore } from "../../store/roomStore";
 import { settingsUi } from "../../store/settingsUi";
 
@@ -34,6 +34,8 @@ export const chatActive = computed(() => {
 // 锁只挡"触发录音"，不挡"监测启停"——否则识别完成后锁一设监测就停、锁过期无人复活。
 export function canStartAsr(opts: { ignoreLock?: boolean; forManual?: boolean } = {}): boolean {
   const { ignoreLock = false, forManual = false } = opts;
+  // 13：断网 / 浏览器没有麦克风采集能力——识别要走后端，这两种情况下按钮必须禁用
+  if (asrOffline.value || !asrSupported.value) return false;
   // 6 + 7：路由/抽屉门控（chatActive 已是这两项的合成）
   if (!chatActive.value) return false;
   // 1-3：核心对话状态（上游 gameStore.currentStatus → 本项目 roomStore.state）

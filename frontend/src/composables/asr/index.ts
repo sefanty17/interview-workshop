@@ -15,13 +15,17 @@ export { registerAsrInputBridge } from "./input-bridge";
 import {
   activeSource,
   asrLockedUntil,
+  asrOffline,
+  asrSessionId,
+  asrSupported,
+  asrTurn,
   asrVoiceActive,
   autoListenActive,
   phase,
   runtime,
   voicePlaying,
 } from "./state";
-export { asrVoiceActive, ASR_DISPLAY_MS } from "./state";
+export { asrOffline, asrSupported, asrVoiceActive, ASR_DISPLAY_MS } from "./state";
 import type { VadEvent } from "../../api/asr";
 import { asrStore } from "../../store/asrStore";
 import { roomStore } from "../../store/roomStore";
@@ -79,6 +83,12 @@ export function setVoicePlaying(playing: boolean): void {
   updateAsrAvailability();
 }
 
+/** 同步当前后端场次：录音落盘按 <sessionId>/<turn> 命名；换场次时轮次归零。 */
+export function setAsrSessionContext(sessionId: number | null): void {
+  asrSessionId.value = sessionId;
+  asrTurn.value = 0;
+}
+
 /**
  * 锁定 ASR 一段时间（识别结果填入 inputMessage 后短暂显示用，§1.10）。
  * 显示期间用户不能再次触发录音（避免 nextTick 期间又来一段覆盖识别结果）。
@@ -99,6 +109,17 @@ function ensureInit() {
   // 否则 active_provider / voice_input_enabled 全是空，识别会走到错误的 provider。
   // load 完成后热键/auto_listen 的 watch 会自动响应新值。
   void asrStore.load().catch((e) => asrLog().warn("load settings failed:", e));
+
+  // 网络 / 浏览器能力同步：断网或没有 getUserMedia 时 mic 必须禁用并提示。
+  // 监听 online/offline 是为了恢复网络后不用刷新页面就能重新录音。
+  const syncNetwork = () => {
+    asrOffline.value = !navigator.onLine;
+    asrSupported.value = Boolean(navigator.mediaDevices?.getUserMedia);
+    updateAsrAvailability();
+  };
+  window.addEventListener("online", syncNetwork);
+  window.addEventListener("offline", syncNetwork);
+  syncNetwork();
 
   // VAD 事件（经 store 中转）：上游由 tauri 事件通道写入 store.vadEvent，
   // 本项目由 recorder.ts 从 /vad 响应体里取出后写入同一个字段，这段 watch 不变

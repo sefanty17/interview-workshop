@@ -7,6 +7,7 @@ import cn.edu.zjut.interview.speech.asr.AsrOptions;
 import cn.edu.zjut.interview.speech.asr.AsrProvider;
 import cn.edu.zjut.interview.speech.asr.AsrProviderConfig;
 import cn.edu.zjut.interview.speech.asr.AsrProviderInfo;
+import cn.edu.zjut.interview.speech.asr.AsrRecordingStore;
 import cn.edu.zjut.interview.speech.asr.AsrRegistry;
 import cn.edu.zjut.interview.speech.asr.AsrResult;
 import cn.edu.zjut.interview.speech.asr.AsrSessionService;
@@ -17,11 +18,16 @@ import cn.edu.zjut.interview.speech.asr.VadEventView;
 import cn.edu.zjut.interview.speech.asr.VadSegmenter;
 import cn.edu.zjut.interview.speech.asr.WavCodec;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -34,9 +40,11 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 语音识别接口：设置读写 + 元数据 + 会话状态 + 探活（V1）、VAD / 整段识别 / 会话（V2）。
@@ -49,7 +57,8 @@ import java.util.List;
  * GET    /api/speech/asr/status     会话状态
  * POST   /api/speech/asr/test       用内置静音 WAV 探活
  * POST   /api/speech/asr/vad        批量帧 VAD（body {"pcm":[float...]}）
- * POST   /api/speech/asr/recognize  multipart 整段 WAV 识别
+ * POST   /api/speech/asr/recognize  multipart 整段 WAV 识别（可选 sessionId/turn 落盘）
+ * GET    /api/speech/asr/recordings/{session}/{name}  回听已落盘的录音
  * POST   /api/speech/asr/sessions   开启会话（已有 → 409）
  * POST   /api/speech/asr/sessions/stop  结束会话（幂等）
  * DELETE /api/speech/asr/sessions   取消会话（幂等）
@@ -72,6 +81,8 @@ import java.util.List;
 @RequestMapping("/api/speech/asr")
 public class AsrController {
 
+    private static final Logger log = LoggerFactory.getLogger(AsrController.class);
+
     /** 探活用静音 WAV：44 字节头 + 16000 个 0（16kHz / 单声道 / 16bit / 1 秒）。 */
     private static final byte[] SILENT_WAV = buildSilentWav();
 
@@ -79,15 +90,18 @@ public class AsrController {
     private final AsrRegistry registry;
     private final AsrSessionService sessionService;
     private final EnergyVad energyVad;
+    private final AsrRecordingStore recordingStore;
 
     public AsrController(AsrSettingsService settingsService,
                          AsrRegistry registry,
                          AsrSessionService sessionService,
-                         EnergyVad energyVad) {
+                         EnergyVad energyVad,
+                         AsrRecordingStore recordingStore) {
         this.settingsService = settingsService;
         this.registry = registry;
         this.sessionService = sessionService;
         this.energyVad = energyVad;
+        this.recordingStore = recordingStore;
     }
 
     /** 当前设置。读取时就修野值（active_provider 已失效 → 回退默认），前端无需自己兜。 */
@@ -210,7 +224,9 @@ public class AsrController {
     @PostMapping(value = "/recognize", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public AsrResult recognize(@RequestParam(name = "wav", required = false) MultipartFile wav,
                                @RequestParam(name = "providerId", required = false) String providerId,
-                               @RequestParam(name = "languageHint", required = false) String languageHint)
+                               @RequestParam(name = "languageHint", required = false) String languageHint,
+                               @RequestParam(name = "sessionId", required = false) Long sessionId,
+                               @RequestParam(name = "turn", required = false) Integer turn)
             throws IOException {
         if (wav == null || wav.isEmpty()) {
             throw new AsrException(AsrErrorKind.INVALID_AUDIO, HttpStatus.BAD_REQUEST,
@@ -220,11 +236,30 @@ public class AsrController {
         // 校验在前：格式不对就不该走到 provider（一次云端调用是有成本的）
         WavCodec.decode(bytes);
 
+        // 落盘不阻断识别：磁盘满 / 权限错只影响「能不能回听」，不能让这一轮直接失败
+        try {
+            recordingStore.save(bytes, sessionId, turn);
+        } catch (RuntimeException e) {
+            log.warn("[ASR] 录音落盘失败，本轮识别继续：{}", e.toString());
+        }
+
         AsrSettings settings = settingsService.load();
         String effectiveProvider = isBlank(providerId) ? settings.getActiveProvider() : providerId.trim();
         AsrProvider provider = registry.require(effectiveProvider);
         return provider.recognize(bytes, new AsrOptions(
                 isBlank(languageHint) ? null : languageHint.trim(), List.of()));
+    }
+
+    /** 回听已落盘的录音。参数形状不合法 / 文件不存在都返回 404，不区分（避免探测目录结构）。 */
+    @GetMapping("/recordings/{session}/{name}")
+    public ResponseEntity<Resource> recording(@PathVariable String session, @PathVariable String name) {
+        Optional<Path> file = recordingStore.resolve(session, name);
+        if (file.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(AsrRecordingStore.contentType()))
+                .body(new FileSystemResource(file.get()));
     }
 
     /**

@@ -357,6 +357,10 @@ export async function asrRecognizeWav(params: {
   wavBytes: number[];
   languageHint?: string | null;
   hotwords?: HotwordInput[] | null;
+  /** 当前后端场次 ID（有值时录音落到 data/audio/<sessionId>/<turn>.wav） */
+  sessionId?: number;
+  /** 语音轮次（有值时文件名就是该轮次；没有则用时间戳） */
+  turn?: number;
 }): Promise<AsrResult> {
   const form = new FormData();
   // 后端 @RequestParam("wav") MultipartFile：字段名必须是 wav，文件名不影响解析
@@ -368,6 +372,9 @@ export async function asrRecognizeWav(params: {
   // 有值才 append：空串会被后端当成「显式传了一个空 providerId」之外的噪音
   if (params.providerId) form.append("providerId", params.providerId);
   if (params.languageHint) form.append("languageHint", params.languageHint);
+  // 场次/轮次只用于录音落盘命名，不参与识别
+  if (params.sessionId != null) form.append("sessionId", String(params.sessionId));
+  if (params.turn != null) form.append("turn", String(params.turn));
   // hotwords 后端 /recognize 目前不接收（热词按角色存库，V4 再接），不 append
 
   const response = await request("/recognize", { method: "POST", body: form });

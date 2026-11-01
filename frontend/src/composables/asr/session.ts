@@ -6,6 +6,8 @@ import {
   MAX_RECORD_SAMPLES,
   activeSource,
   asrLockedUntil,
+  asrSessionId,
+  asrTurn,
   asrVoiceActive,
   autoListenActive,
   phase,
@@ -306,9 +308,18 @@ async function doRecognize(source: AsrSource, captured: number[]) {
       return;
     }
     const providerId = runtime.asrStore?.settings?.active_provider ?? "qwen-asr";
+    // 轮次只在成功识别后推进：失败重录仍用同一轮，避免录音目录里出现空档
+    const turn = asrTurn.value + 1;
     const result = isLlamaStream()
       ? await asrRecognizeWavStream({ providerId, wavBytes: Array.from(wav) })
-      : await asrRecognizeWav({ providerId, wavBytes: Array.from(wav), languageHint: null });
+      : await asrRecognizeWav({
+          providerId,
+          wavBytes: Array.from(wav),
+          languageHint: null,
+          sessionId: asrSessionId.value ?? undefined,
+          turn,
+        });
+    asrTurn.value = turn;
     handleResult(result.text, source);
   } catch (err) {
     asrLog().error("recognize failed:", err);

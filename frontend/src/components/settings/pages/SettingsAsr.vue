@@ -11,6 +11,17 @@
         <span class="text-sm" :class="statusClass">{{ statusText }}</span>
       </div>
 
+      <p
+        v-if="!asrSupported || asrOffline"
+        class="mt-3 rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+      >
+        {{
+          !asrSupported
+            ? "当前浏览器不支持语音输入（缺少麦克风采集接口 getUserMedia），请使用 Chrome / Edge 等浏览器。"
+            : "当前已断网，语音输入不可用；恢复网络后会自动重新可用。"
+        }}
+      </p>
+
       <div class="mt-4">
         <button
           type="button"
@@ -746,6 +757,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { asrOffline, asrSupported } from "../../../composables/asr";
 import {
   Activity,
   CircleAlert,

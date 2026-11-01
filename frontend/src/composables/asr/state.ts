@@ -96,6 +96,16 @@ export const voicePlaying = ref(false);
 /** 语音会话进行中（GameDialog 据此 readonly 输入框，语音期间禁止手动输入）。
  *  前缀 asr 用于与同模块的 voicePlaying（TTS 播放中）在组件顶层导入时消歧。 */
 export const asrVoiceActive = ref(false);
+/** 当前后端场次 ID（InterviewRoomView 建会话时写入）：录音落盘按它分目录。 */
+export const asrSessionId = ref<number | null>(null);
+/** 当前场次已成功识别的语音轮次：每成功一轮 +1，作为录音文件名。 */
+export const asrTurn = ref(0);
+/** 断网（离线）：识别要打后端，离线时 mic 必须禁用并给出提示。 */
+export const asrOffline = ref(typeof navigator !== "undefined" && !navigator.onLine);
+/** 浏览器是否具备麦克风采集能力（没有 getUserMedia 的浏览器直接禁用 mic）。 */
+export const asrSupported = ref(
+  typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia),
+);
 /** 功能开关（运行态）：auto_listen 模式开启时由 mic/快捷键切换——监听激活/暂停。
  *  不持久化、不改 auto_listen 模式设置。 */
 export const autoListenActive = ref(false);
