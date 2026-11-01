@@ -972,89 +972,15 @@ const MODEL_SIZE_OPTIONS: AsrFieldOption[] = [
   { value: "large", label: "large（2.9 GB）" },
 ];
 
-/** 识别服务商清单：原版由后端 ProviderInfo 下发，本项目静态内置，字段形态与之一致 */
+/** 识别服务商清单：只列后端 AsrRegistry 真实支持的三个。
+ *
+ * 上游静态清单里的 fun-asr / sense-voice / web-speech / auto-vad 在本项目后端没有对应实现；
+ * 保留在「识别服务」列表里只会让用户选到必失败的 provider（测试连接直接 400 未知 provider）。
+ * qwen 的 id 必须是 qwen-asr（后端 AsrRegistry.PROVIDER_ORDER 的键），不能写 qwen。
+ */
 const ASR_PROVIDERS: AsrProvider[] = [
   {
-    id: "llama-asr",
-    display_name: "本地 llama-server（whisper.cpp）",
-    description: "本机运行的 llama-server / whisper.cpp，模型清单从服务端 /v1/models 拉取，无需联网。",
-    config_fields: [
-      {
-        key: "endpoint",
-        label: "端点地址",
-        kind: "text",
-        placeholder: "http://127.0.0.1:8080",
-        hint: "llama-server 的 OpenAI 兼容地址，服务没起时模型列表会拉不到",
-      },
-      { key: "model", label: "模型", kind: "select", options: [] },
-      {
-        key: "model_path",
-        label: "模型路径",
-        kind: "text",
-        placeholder: "models/ggml-base.bin",
-        hint: "本地 ggml / gguf 模型文件相对路径",
-      },
-      { key: "model_size", label: "模型大小", kind: "select", options: MODEL_SIZE_OPTIONS },
-      { key: "device", label: "设备", kind: "select", options: DEVICE_OPTIONS },
-      { key: "language", label: "语言", kind: "select", options: LANGUAGE_OPTIONS },
-      { key: "threads", label: "线程数", kind: "number", placeholder: "4" },
-      { key: "translate", label: "翻译为英文", kind: "boolean" },
-    ],
-    regions: [],
-    models: [
-      { id: "whisper-base", display_name: "Whisper Base（本地）", supports_streaming: false, is_default: true },
-      { id: "whisper-small", display_name: "Whisper Small（本地）", supports_streaming: false },
-      { id: "whisper-large-v3", display_name: "Whisper Large V3（流式）", supports_streaming: true },
-    ],
-  },
-  {
-    id: "fun-asr",
-    display_name: "FunASR（本地服务）",
-    description: "阿里 FunASR 本地服务，中文识别准确率高，支持热词与流式 paraformer。",
-    config_fields: [
-      {
-        key: "endpoint",
-        label: "端点地址",
-        kind: "text",
-        placeholder: "http://127.0.0.1:10095",
-      },
-      { key: "model", label: "模型", kind: "select", options: [] },
-      { key: "model_path", label: "模型路径", kind: "text", placeholder: "models/paraformer-zh" },
-      { key: "model_size", label: "模型大小", kind: "select", options: MODEL_SIZE_OPTIONS },
-      { key: "device", label: "设备", kind: "select", options: DEVICE_OPTIONS },
-      { key: "language", label: "语言", kind: "select", options: LANGUAGE_OPTIONS },
-      { key: "threads", label: "线程数", kind: "number", placeholder: "4" },
-      { key: "hotword", label: "热词", kind: "text", placeholder: "用空格分隔多个热词" },
-    ],
-    regions: [],
-    models: [
-      { id: "paraformer-zh", display_name: "Paraformer 中文（离线）", supports_streaming: false, is_default: true },
-      { id: "paraformer-zh-streaming", display_name: "Paraformer 中文（流式）", supports_streaming: true },
-      { id: "fun-asr-nano", display_name: "FunASR Nano（轻量）", supports_streaming: false },
-    ],
-  },
-  {
-    id: "sense-voice",
-    display_name: "SenseVoice（本地服务）",
-    description: "SenseVoiceSmall 多语言模型，带内置 VAD 与情感/事件标签。",
-    config_fields: [
-      { key: "endpoint", label: "端点地址", kind: "text", placeholder: "http://127.0.0.1:50000" },
-      { key: "model", label: "模型", kind: "select", options: [] },
-      { key: "model_path", label: "模型路径", kind: "text", placeholder: "models/SenseVoiceSmall" },
-      { key: "model_size", label: "模型大小", kind: "select", options: MODEL_SIZE_OPTIONS },
-      { key: "device", label: "设备", kind: "select", options: DEVICE_OPTIONS },
-      { key: "language", label: "语言", kind: "select", options: LANGUAGE_OPTIONS },
-      { key: "threads", label: "线程数", kind: "number", placeholder: "2" },
-      { key: "vad", label: "内置 VAD 切分", kind: "boolean" },
-    ],
-    regions: [],
-    models: [
-      { id: "sense-voice-small", display_name: "SenseVoiceSmall（离线）", supports_streaming: false, is_default: true },
-      { id: "sense-voice-small-streaming", display_name: "SenseVoiceSmall（流式）", supports_streaming: true },
-    ],
-  },
-  {
-    id: "qwen",
+    id: "qwen-asr",
     display_name: "云端 API（阿里云百炼 DashScope）",
     description: "阿里云百炼语音识别，按地域分存 API Key，支持一句话识别与实时流式识别。",
     config_fields: [
@@ -1100,34 +1026,46 @@ const ASR_PROVIDERS: AsrProvider[] = [
     ],
   },
   {
-    id: "web-speech",
-    display_name: "浏览器原生识别",
-    description: "使用浏览器自带的语音识别（Web Speech API），无需任何本地模型与 Key，识别能力取决于浏览器。",
+    id: "llama-asr",
+    display_name: "本地 llama-server（whisper.cpp）",
+    description: "本机运行的 llama-server / whisper.cpp，模型清单从服务端 /v1/models 拉取，无需联网。",
     config_fields: [
+      {
+        key: "endpoint",
+        label: "端点地址",
+        kind: "text",
+        placeholder: "http://127.0.0.1:8080",
+        hint: "llama-server 的 OpenAI 兼容地址，服务没起时模型列表会拉不到",
+      },
+      { key: "model", label: "模型", kind: "select", options: [] },
+      {
+        key: "model_path",
+        label: "模型路径",
+        kind: "text",
+        placeholder: "models/ggml-base.bin",
+        hint: "本地 ggml / gguf 模型文件相对路径",
+      },
+      { key: "model_size", label: "模型大小", kind: "select", options: MODEL_SIZE_OPTIONS },
+      { key: "device", label: "设备", kind: "select", options: DEVICE_OPTIONS },
       { key: "language", label: "语言", kind: "select", options: LANGUAGE_OPTIONS },
-      { key: "interim_results", label: "显示中间结果", kind: "boolean" },
-      { key: "continuous", label: "连续识别", kind: "boolean" },
+      { key: "threads", label: "线程数", kind: "number", placeholder: "4" },
+      { key: "translate", label: "翻译为英文", kind: "boolean" },
     ],
     regions: [],
     models: [
-      { id: "web-speech-zh", display_name: "浏览器识别（中文）", supports_streaming: true, is_default: true },
-      { id: "web-speech-en", display_name: "浏览器识别（英语）", supports_streaming: true },
+      { id: "whisper-base", display_name: "Whisper Base（本地）", supports_streaming: false, is_default: true },
+      { id: "whisper-small", display_name: "Whisper Small（本地）", supports_streaming: false },
+      { id: "whisper-large-v3", display_name: "Whisper Large V3（流式）", supports_streaming: true },
     ],
   },
   {
-    id: "auto-vad",
-    display_name: "自动语音检测（VAD）",
-    description: "只做人声端点检测：由 Silero VAD 决定何时开始/结束录音，识别仍交给上方选中的引擎。",
-    config_fields: [
-      { key: "device", label: "设备", kind: "select", options: DEVICE_OPTIONS },
-      { key: "sensitivity", label: "灵敏度（0–1）", kind: "number", placeholder: "0.5" },
-      { key: "min_speech_ms", label: "最短语音时长（毫秒）", kind: "number", placeholder: "250" },
-      { key: "language", label: "语言", kind: "select", options: LANGUAGE_OPTIONS },
-    ],
+    id: "mock-asr",
+    display_name: "模拟识别（无需 Key）",
+    description: "本地固定返回一段文本，用于验证录音、上传、结果回填与录音落盘链路。",
+    config_fields: [],
     regions: [],
     models: [
-      { id: "vad-silero-zh", display_name: "Silero VAD（中文）", supports_streaming: true, is_default: true },
-      { id: "vad-silero-en", display_name: "Silero VAD（多语言）", supports_streaming: true },
+      { id: "mock-asr", display_name: "模拟识别", supports_streaming: false, is_default: true },
     ],
   },
 ];
@@ -1150,33 +1088,6 @@ const MODEL_CATALOG: ModelAsset[] = [
     language: "多语言",
     provider: "llama-asr",
     model: "whisper-small",
-  },
-  {
-    id: "paraformer",
-    name: "Paraformer 中文大模型",
-    engine: "FunASR",
-    size: "840 MB",
-    language: "中文",
-    provider: "fun-asr",
-    model: "paraformer-zh",
-  },
-  {
-    id: "sense-voice-small",
-    name: "SenseVoiceSmall",
-    engine: "SenseVoice",
-    size: "936 MB",
-    language: "中文 / 英语 / 日语",
-    provider: "sense-voice",
-    model: "sense-voice-small",
-  },
-  {
-    id: "silero-vad",
-    name: "Silero VAD 语音检测模型",
-    engine: "自动语音检测（VAD）",
-    size: "2.1 MB",
-    language: "多语言",
-    provider: "auto-vad",
-    model: "vad-silero-zh",
   },
 ];
 
@@ -1652,7 +1563,13 @@ onMounted(() => {
   void asrStore
     .load()
     // 补 default_value 必须排在 load 之后：它改的是本地副本，先改会被 load 的整体替换覆盖
-    .then(() => ensureProviderConfig())
+    .then(() => {
+      // 老库/旧 UI 可能保存了后端不认识的 provider（web-speech 等）→ 回落到支持列表第一项
+      if (!ASR_PROVIDERS.some((p) => p.id === asrStore.settings.active_provider)) {
+        updateSettings({ active_provider: ASR_PROVIDERS[0].id });
+      }
+      ensureProviderConfig();
+    })
     .catch((e) => console.warn("[ASR] 拉取语音设置失败:", e));
 });
 
