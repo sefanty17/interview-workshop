@@ -125,7 +125,7 @@ class ModifyCharacterEventTest {
         ObjectNode vars = objectMapper.createObjectNode();
         return new EngineContext(session, event(json), sink, mock(InterviewMessageRepository.class),
                 mock(InterviewChapterRepository.class), interviewerRepository, null, objectMapper,
-                "蔡智豪", vars, "intro", presentRoles);
+                "候选人", vars, "intro", presentRoles);
     }
 
     private JsonNode event(String json) throws Exception {

@@ -1,5 +1,6 @@
 package cn.edu.zjut.interview.api;
 
+import cn.edu.zjut.interview.domain.InterviewMessage;
 import cn.edu.zjut.interview.dto.CreateSessionRequest;
 import cn.edu.zjut.interview.dto.CreateSessionResponse;
 import cn.edu.zjut.interview.dto.SessionDetailView;
@@ -9,10 +10,18 @@ import cn.edu.zjut.interview.dto.SessionSummaryView;
 import cn.edu.zjut.interview.engine.EngineExecutor;
 import cn.edu.zjut.interview.engine.InterviewEngine;
 import cn.edu.zjut.interview.engine.SseEventSink;
+import cn.edu.zjut.interview.repository.InterviewEvaluationDimensionRepository;
+import cn.edu.zjut.interview.repository.InterviewEvaluationRepository;
+import cn.edu.zjut.interview.repository.InterviewMessageRepository;
+import cn.edu.zjut.interview.repository.InterviewSessionRepository;
 import cn.edu.zjut.interview.service.ChatService;
+import cn.edu.zjut.interview.summary.SummaryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,6 +29,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
@@ -44,11 +54,28 @@ public class SessionController {
     private final ChatService chatService;
     private final InterviewEngine engine;
     private final EngineExecutor engineExecutor;
+    private final InterviewSessionRepository sessionRepository;
+    private final InterviewMessageRepository messageRepository;
+    private final InterviewEvaluationRepository evaluationRepository;
+    private final InterviewEvaluationDimensionRepository dimensionRepository;
+    private final SummaryService summaryService;
 
-    public SessionController(ChatService chatService, InterviewEngine engine, EngineExecutor engineExecutor) {
+    public SessionController(ChatService chatService,
+                             InterviewEngine engine,
+                             EngineExecutor engineExecutor,
+                             InterviewSessionRepository sessionRepository,
+                             InterviewMessageRepository messageRepository,
+                             InterviewEvaluationRepository evaluationRepository,
+                             InterviewEvaluationDimensionRepository dimensionRepository,
+                             SummaryService summaryService) {
         this.chatService = chatService;
         this.engine = engine;
         this.engineExecutor = engineExecutor;
+        this.sessionRepository = sessionRepository;
+        this.messageRepository = messageRepository;
+        this.evaluationRepository = evaluationRepository;
+        this.dimensionRepository = dimensionRepository;
+        this.summaryService = summaryService;
     }
 
     @PostMapping
@@ -64,6 +91,27 @@ public class SessionController {
     @GetMapping
     public List<SessionSummaryView> list(@RequestParam(required = false) String status) {
         return engine.list(status);
+    }
+
+    /**
+     * 删除一场面试：先清台词、评估维度、评估，再删场次本身，避免外键悬空。
+     * 记录页的单个删除 / 批量删除都走这里。
+     */
+    @DeleteMapping("/{id}")
+    @Transactional
+    public void delete(@PathVariable Long id) {
+        if (!sessionRepository.existsById(id)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "场次不存在");
+        }
+        dimensionRepository.deleteBySessionId(id);
+        evaluationRepository.deleteBySessionId(id);
+        summaryService.deleteBySessionId(id);
+        List<InterviewMessage> messages = messageRepository.findBySessionIdOrderBySeqAsc(id);
+        if (!messages.isEmpty()) {
+            messageRepository.deleteAll(messages);
+        }
+        sessionRepository.deleteById(id);
+        log.info("[SessionController] 已删除场次 {}（连带 {} 条台词）", id, messages.size());
     }
 
     /**
@@ -126,6 +174,11 @@ public class SessionController {
 
     @PostMapping("/{id}/finish")
     public SessionFinishView finish(@PathVariable Long id) {
-        return engine.finishNow(id);
+        SessionFinishView view = engine.finishNow(id);
+        // issue #4：剧本场次结束后在后台生成一次对话总结。异步触发是刻意的——
+        // 总结要调大模型（十几秒甚至更久），结束面试不能等它；失败也只落一行 failed，
+        // 由报告页显示「摘要生成失败」，绝不回滚已经结束的场次。
+        summaryService.generateAsync(id);
+        return view;
     }
 }

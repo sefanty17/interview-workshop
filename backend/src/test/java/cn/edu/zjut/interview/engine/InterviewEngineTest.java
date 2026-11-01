@@ -75,7 +75,7 @@ class InterviewEngineTest {
         assertEquals(InterviewEngine.STATUS_RUNNING, session.getStatus());
 
         RecordingSink second = new RecordingSink();
-        engine.submitAndRun(sessionId, "我叫蔡智豪", second);
+        engine.submitAndRun(sessionId, "我叫候选人", second);
 
         session = sessionRepository.findById(sessionId).orElseThrow();
         assertEquals(5, session.getEventSequence());
@@ -84,7 +84,7 @@ class InterviewEngineTest {
 
         List<InterviewMessage> messages = messageRepository.findBySessionIdOrderBySeqAsc(sessionId);
         assertTrue(messages.stream().anyMatch(m -> InterviewMessage.ROLE_USER.equals(m.getRole())
-                        && "我叫蔡智豪".equals(m.getContent())),
+                        && "我叫候选人".equals(m.getContent())),
                 "用户台词必须落库");
         assertTrue(messages.stream().anyMatch(m -> "plot".equals(m.getMsgType())
                         && m.getContent().startsWith("{旁白: （接下来的剧情演绎提示：")),

@@ -3,6 +3,7 @@ package cn.edu.zjut.interview.engine.events;
 import cn.edu.zjut.interview.engine.EngineContext;
 import cn.edu.zjut.interview.engine.ScriptEvent;
 import cn.edu.zjut.interview.engine.payload.AmbientPayload;
+import cn.edu.zjut.interview.media.MediaStateStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,7 +16,7 @@ import org.slf4j.LoggerFactory;
  * emit {@code script:ambient}（{@code AmbientPayload{ambientPath, volume, loop, stop, fade, duration?}}）。
  *
  * <p>{@code stop=true} 是停止指令，此时不需要解析路径，直接发出（原版同样提前 return）。
- * 本项目路径原样下发。
+ * 本项目路径原样下发；活跃音轨随 {@code media_state} 落库（issue #13），刷新后可恢复。
  */
 public class AmbientEvent implements ScriptEvent {
 
@@ -32,6 +33,9 @@ public class AmbientEvent implements ScriptEvent {
         boolean stop = event != null && event.path("stop").asBoolean(false);
         boolean fade = event == null || event.path("fade").asBoolean(true);
         Double duration = ScriptEvent.parseDuration(event);
+
+        MediaStateStore.applyAmbient(ctx.session(), ctx.objectMapper(),
+                new AmbientPayload(ambientPath, volume, loop, stop, fade, duration));
 
         if (stop) {
             ctx.sink().ambient(new AmbientPayload(ambientPath, volume, loop, true, fade, duration));

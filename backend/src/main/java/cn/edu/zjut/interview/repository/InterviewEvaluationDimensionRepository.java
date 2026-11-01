@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -19,6 +20,13 @@ public interface InterviewEvaluationDimensionRepository extends JpaRepository<In
      * <p>成长曲线按 {@code dim_code} 查趋势，所以顺序必须稳定，不能依赖数据库返回次序。
      */
     List<InterviewEvaluationDimension> findBySessionIdOrderByIdAsc(Long sessionId);
+
+    /**
+     * 一批场次的维度行，顺序仍按 id 升序（= 写入顺序 technical / depth / logic / fit）。
+     *
+     * <p>调用方自己按 sessionId 分组，分组后组内顺序即为维度写入顺序。
+     */
+    List<InterviewEvaluationDimension> findBySessionIdInOrderByIdAsc(Collection<Long> sessionIds);
 
     /** 重跑前先清空该场次的旧维度行（先删后插）。 */
     @Modifying

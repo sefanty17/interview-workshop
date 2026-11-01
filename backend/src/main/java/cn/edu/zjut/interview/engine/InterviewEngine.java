@@ -29,6 +29,7 @@ import cn.edu.zjut.interview.engine.events.SetVariableEvent;
 import cn.edu.zjut.interview.engine.events.SoundEvent;
 import cn.edu.zjut.interview.llm.LlmClient;
 import cn.edu.zjut.interview.llm.LlmMessage;
+import cn.edu.zjut.interview.media.MediaStateStore;
 import cn.edu.zjut.interview.prompt.MemoryBuilder;
 import cn.edu.zjut.interview.repository.InterviewChapterRepository;
 import cn.edu.zjut.interview.repository.InterviewMessageRepository;
@@ -423,7 +424,8 @@ public class InterviewEngine {
         load(sessionId);
     }
 
-    public SessionDetailView detail(Long sessionId) {        InterviewSession session = load(sessionId);
+    public SessionDetailView detail(Long sessionId) {
+        InterviewSession session = load(sessionId);
         InterviewScript script = script(session);
         var interviewer = interviewerRepository.findById(session.getInterviewerId()).orElse(null);
         List<SessionMessageView> messages = messageRepository.findBySessionIdOrderBySeqAsc(sessionId)
@@ -439,7 +441,8 @@ public class InterviewEngine {
                 session.getEventSequence(),
                 script == null ? null : script.getCode(),
                 interviewer == null ? null : interviewer.getCode(),
-                messages);
+                messages,
+                MediaStateStore.parse(session.getMediaState(), objectMapper));
     }
 
     public SessionFinishView finishNow(Long sessionId) {

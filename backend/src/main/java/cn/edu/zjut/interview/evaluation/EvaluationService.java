@@ -8,6 +8,7 @@ import cn.edu.zjut.interview.domain.InterviewMessage;
 import cn.edu.zjut.interview.domain.InterviewSession;
 import cn.edu.zjut.interview.dto.EvaluationResult;
 import cn.edu.zjut.interview.dto.EvaluationResult.DimensionScore;
+import cn.edu.zjut.interview.dto.EvaluationResult.QuestionReview;
 import cn.edu.zjut.interview.llm.LlmClient;
 import cn.edu.zjut.interview.repository.InterviewEvaluationDimensionRepository;
 import cn.edu.zjut.interview.repository.InterviewEvaluationRepository;
@@ -130,6 +131,7 @@ public class EvaluationService {
         evaluation.setStrengths(toJson(draft.strengths()));
         evaluation.setWeaknesses(toJson(draft.weaknesses()));
         evaluation.setSuggestions(toJson(draft.suggestions()));
+        evaluation.setQuestionReviews(objectMapper.valueToTree(draft.questions()).toString());
         evaluation.setModel(model);
         evaluation.setCreatedAt(now);
         evaluationRepository.save(evaluation);
@@ -150,9 +152,17 @@ public class EvaluationService {
         session.setScore(draft.overall());
         sessionRepository.save(session);
 
-        log.info("[EvaluationService] 场次 {} 评估完成，总分 {}（model={}）", sessionId, draft.overall(), model);
+        List<QuestionReview> questions = new ArrayList<>();
+        for (EvaluationParser.QuestionDraft question : draft.questions()) {
+            questions.add(new QuestionReview(question.index(), question.question(), question.quote(),
+                    question.score(), question.comment(), question.suggestion()));
+        }
+
+        log.info("[EvaluationService] 场次 {} 评估完成，总分 {}，逐题 {} 道（model={}）",
+                sessionId, draft.overall(), questions.size(), model);
         return new EvaluationResult(sessionId, session.getJobCode(), draft.overall(), draft.summary(),
-                draft.strengths(), draft.weaknesses(), draft.suggestions(), List.copyOf(dimensions), model, now);
+                draft.strengths(), draft.weaknesses(), draft.suggestions(), List.copyOf(dimensions),
+                List.copyOf(questions), model, now);
     }
 
     /**
@@ -177,7 +187,41 @@ public class EvaluationService {
         }
         return new EvaluationResult(row.getSessionId(), row.getJobCode(), row.getOverallScore(), row.getSummary(),
                 fromJson(row.getStrengths()), fromJson(row.getWeaknesses()), fromJson(row.getSuggestions()),
-                List.copyOf(dimensions), row.getModel(), row.getCreatedAt());
+                List.copyOf(dimensions), questionReviews(row.getQuestionReviews()),
+                row.getModel(), row.getCreatedAt());
+    }
+
+    /**
+     * 逐题复盘 JSON → 列表。历史评估没有这一列（null）或写坏了，一律降级成空数组：
+     * 「查评估」不应该因为一个可选字段挂掉。
+     */
+    private List<QuestionReview> questionReviews(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            if (!node.isArray()) {
+                return List.of();
+            }
+            List<QuestionReview> reviews = new ArrayList<>(node.size());
+            for (JsonNode item : node) {
+                if (!item.isObject()) {
+                    continue;
+                }
+                reviews.add(new QuestionReview(
+                        item.path("index").isNumber() ? item.path("index").asInt() : reviews.size() + 1,
+                        item.path("question").asText(""),
+                        item.path("quote").asText(""),
+                        item.path("score").isNumber() ? item.path("score").asInt() : 0,
+                        item.path("comment").asText(""),
+                        item.path("suggestion").asText("")));
+            }
+            return reviews;
+        } catch (IOException e) {
+            log.warn("[EvaluationService] question_reviews 不是合法 JSON 数组，按空处理：{}", json);
+            return List.of();
+        }
     }
 
     /**

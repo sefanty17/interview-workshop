@@ -112,7 +112,8 @@ import ToolActivityStatus from "../components/tools/ToolActivityStatus.vue";
 import FullAccessWarning from "../components/tools/FullAccessWarning.vue";
 import { dimensionNames, jobs, questions as questionBank, type InterviewRecord } from "../data/mock";
 import { findInterviewer } from "../data/interviewers";
-import { confirmDialog } from "../store/dialogStore";
+import { findScript } from "../data/scripts";
+import { alertDialog, confirmDialog } from "../store/dialogStore";
 import {
   createSession,
   fetchSessionDetail,
@@ -147,6 +148,12 @@ import {
   type RoomLine,
 } from "../store/roomStore";
 import { attachRoomAudio } from "../store/roomAudio";
+import {
+  applyMediaState,
+  forgetActiveSession,
+  readActiveSession,
+  rememberActiveSession,
+} from "../store/mediaRestore";
 import Icon from "../components/base/widget/Icon.vue";
 import { applyPendingChoice, runScriptStream } from "../composables/useScriptRunner";
 import { useVoicePlayback } from "../composables/useVoicePlayback";
@@ -178,12 +185,19 @@ const card = computed(() => cardForCode(persona.value.code));
 /** 剧本面试才有固定题量；自由面试不设上限，用户点「结束面试」才收尾 */
 const isScript = computed(() => store.session.mode === "script");
 
-/** 题库：先按知识点偏好排序。剧本面试截取 settings.questionCount 道，自由面试用整份循环 */
+/** 题库：先按知识点偏好排序、按题面去重。剧本面试截取 settings.questionCount 道 */
 const questionPool = computed(() => {
   const all = questionBank.filter((q) => q.jobId === store.session.jobId);
   const preferred = all.filter((q) => store.settings.kps.includes(q.kp));
   const rest = all.filter((q) => !preferred.includes(q));
-  const ordered = [...preferred, ...rest];
+  // 题库去重：同一道题可能被不同知识点重复收录，按题面文本去掉重复
+  const seen = new Set<string>();
+  const ordered = [...preferred, ...rest].filter((q) => {
+    const text = q.text.trim();
+    if (seen.has(text)) return false;
+    seen.add(text);
+    return true;
+  });
   if (!isScript.value) return ordered;
   const target = Math.max(3, Math.min(8, store.settings.questionCount));
   return ordered.slice(0, target);
@@ -305,8 +319,8 @@ function emitAi(
 function currentQuestion() {
   const pool = questionPool.value;
   if (!pool.length) return undefined;
-  const idx = isScript.value ? store.session.questionIndex : store.session.questionIndex % pool.length;
-  return pool[idx];
+  // 题库不循环：问完最后一道就收尾，避免同一道题换个顺序再问一遍
+  return pool[store.session.questionIndex];
 }
 
 function kpName(id: string) {
@@ -402,17 +416,44 @@ const scriptProgressPct = ref(0);
 async function ensureServerSession(): Promise<boolean> {
   if (sessionId.value !== null) return true;
   if (!(await isBackendUp())) return false;
+
+  // 刷新 / 重新进房间：先找回上一场仍在进行中的后端场次。
+  // 之前每次都新建，刷新后背景与 BGM 无从恢复（issue #13 的验收点）。
+  // 只在「本地已有对话历史」时续跑：从首页全新开一场时不能把旧场次认成新的。
+  const active = readActiveSession();
+  if (active && store.session.messages.length > 1) {
+    try {
+      const detail = await fetchSessionDetail(active.sessionId);
+      if (detail.status === "running") {
+        sessionId.value = detail.id;
+        boundScriptCode.value = detail.scriptCode ?? null;
+        applyMediaState(detail.mediaState);
+        return true;
+      }
+    } catch {
+      /* 场次已被删除 / 后端重启后清库：落到下面新建 */
+    }
+    forgetActiveSession();
+  }
+
   try {
     // 剧本模式带上「剧本冒险」里选中的剧本 code；自由模式不传（后端不再按岗位自动绑剧本）
-    const scriptCode =
-      store.session.mode === "script" ? localStorage.getItem("bondScript") || undefined : undefined;
+    const scriptMode = store.session.mode === "script";
+    const scriptCode = scriptMode ? localStorage.getItem("bondScript") || undefined : undefined;
+    const bond = scriptCode
+      ? store.scripts.find((s) => s.code === scriptCode) ?? findScript(scriptCode)
+      : undefined;
     const result = await createSession({
-      interviewerCode: store.settings.personaId,
-      jobId: store.settings.jobId,
+      // 剧本场次以本场选择为准：岗位跟剧本 job_code，面试官用「剧本冒险」里选的角色；
+      // 否则后端会落成设置页里的全局岗位/面试官（典型表现为打了前端剧本却显示 java/风雪）。
+      interviewerCode: scriptMode ? store.session.personaId : store.settings.personaId,
+      jobId: scriptMode ? bond?.job_code ?? store.session.jobId : store.settings.jobId,
       scriptCode,
     });
     sessionId.value = result.sessionId;
     boundScriptCode.value = scriptCode ?? null;
+    // 记住这一场：刷新后靠它续回同一个后端场次（媒体状态 / 章节进度都挂在它上面）
+    rememberActiveSession(result.sessionId, scriptCode ?? null);
     // 开场白以刚建出来的场次为准（startSession 会先在本地塞一条同文案的开场，这里换成后端的）
     const seededOpeningOnly =
       store.session.messages.length === 1 &&
@@ -537,7 +578,16 @@ async function runScript(stream: AsyncGenerator<StreamEvent>): Promise<boolean> 
     onChapter: (c) => (scriptChapter.value = c),
     onProgress: (p) => (scriptProgressPct.value = p),
     onEnd: () => (autoFinish.value = true),
-    onError: (payload) => console.warn("[interview] ai:error", payload),
+    onError: (payload) => {
+      console.warn("[interview] ai:error", payload);
+      // 剧本推进出错时后端不会再给台词：必须自己退出「思考中」，并告诉用户原因
+      roomStore.state = "input";
+      const detail =
+        typeof payload === "string"
+          ? payload
+          : (payload as { message?: string } | null)?.message ?? "后端剧本推进失败";
+      void alertDialog("面试中断", detail);
+    },
   });
 }
 
@@ -589,7 +639,9 @@ async function enterScriptScene(): Promise<void> {
     return;
   }
 
-  // 刷新续跑：本地 syncRoomFromSession 的结果为准，不重放，也不自动开演
+  // 刷新续跑：把后端快照里的背景 / 特效 / BGM / 环境音 / 浮层拨回事件切换时的样子，
+  // 再停在输入态等用户发言（不重放，也不自动开演）
+  applyMediaState(detail?.mediaState);
   roomStore.state = "input";
 }
 
@@ -667,23 +719,25 @@ async function finish() {
   if (pending) window.clearTimeout(pending);
 
   const pool = questionPool.value;
-  const total = Math.max(1, answeredCount.value);
-  // 自由面试题库会循环，按取模还原实际问过的题序
-  const answered = Array.from({ length: total }, (_, i) => pool[isScript.value ? i : i % (pool.length || 1)])
-    .filter((q): q is (typeof questionBank)[number] => !!q);
+  // 有效作答轮次；不足 3 轮视为无效面试，分数一律 0（不再给 79+n%4 的假分）
+  const answeredTurns = answeredCount.value;
+  const tooShort = answeredTurns < 3;
+  const total = tooShort ? 0 : Math.max(1, answeredTurns);
+  // 题库不再循环，实际问过的就是前 answeredTurns 道
+  const answered = pool.slice(0, total).filter((q): q is (typeof questionBank)[number] => !!q);
   const base = 79 + (answered.length % 4);
   const dims = dimensionNames.map((name, i) => ({
     name,
-    score: clamp(base + [5, -3, 7, 8, 1][i]),
+    score: tooShort ? 0 : clamp(base + [5, -3, 7, 8, 1][i]),
   }));
-  const mockScore = clamp(dims.reduce((sum, d) => sum + d.score, 0) / dims.length);
+  const mockScore = tooShort ? 0 : clamp(dims.reduce((sum, d) => sum + d.score, 0) / dims.length);
 
   // 后端在线 → 用后端算出的总分；调用失败则退回本地 mock 分数（降级不能删）
   let score = mockScore;
   if (sessionId.value !== null) {
     try {
       const result = await finishSession(sessionId.value);
-      if (typeof result.score === "number") score = clamp(result.score);
+      if (typeof result.score === "number" && !tooShort) score = clamp(result.score);
     } catch (error) {
       console.warn("[interview] 结束场次失败，沿用本地分数", error);
     }
@@ -691,9 +745,19 @@ async function finish() {
 
   // clearSession() 会清掉本地会话缓存，先把场次 id 取出来，跳转时要拼进 ?sid=
   const sid = sessionId.value;
+  clearSession();
+  // 这一场已经结束：别让下次进房间把它当成「还在进行中的场次」续回来
+  forgetActiveSession();
+
+  // 后端已建场次：记录由后端统一提供，本地不再写一份，否则「面试记录」里同一场会出现两条
+  // （一条后端真实场次、一条本地 mock 分条目）。作答不足 3 轮时带 noeval=1，报告页不跑 AI 评估，分数保持 0。
+  if (sid !== null) {
+    router.push(`/report/s-${sid}?sid=${sid}${tooShort ? "&noeval=1" : ""}`);
+    return;
+  }
+
   const record: InterviewRecord = {
     id: `r-${Date.now()}`,
-    sessionId: sid ?? undefined,
     jobName: job.value.name,
     personaName: `${persona.value.name} · ${persona.value.displayRole}`,
     date: new Date().toLocaleString("zh-CN", { hour12: false }).replace(/\//g, "-"),
@@ -716,8 +780,7 @@ async function finish() {
   };
 
   addRecord(record);
-  clearSession();
-  router.push(sid ? `/report/${record.id}?sid=${sid}` : `/report/${record.id}`);
+  router.push(`/report/${record.id}`);
 }
 
 /** 把 session.messages 还原成房间句子队列（刷新/挂载恢复）

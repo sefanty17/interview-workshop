@@ -154,6 +154,19 @@
       </MenuItem>
     </div>
 
+    <!-- 规则说明 -->
+    <div class="h-full cursor-pointer transition-all duration-300" @click="emit('navigate', 'rules')">
+      <MenuItem title="规则说明" size="large">
+        <template #header>
+          <BookOpen :size="20" />
+        </template>
+        <p class="mb-3 min-h-17 text-sm leading-relaxed text-white/50">
+          评分与评估口径、剧本媒体事件的降级规则、记录与报告约定
+        </p>
+        <Button type="big" icon="advance" :icon_size="18">查看规则说明</Button>
+      </MenuItem>
+    </div>
+
     <!-- 内置 TTS 教程 -->
     <div class="h-full cursor-pointer transition-all duration-300" @click="openGuide">
       <MenuItem title="内置 TTS 教程" size="large">
@@ -222,7 +235,7 @@ async function onAffectionToggle(): Promise<void> {
 }
 
 const emit = defineEmits<{
-  navigate: [tab: "llm" | "tts" | "asr" | "other" | "tools" | "cast" | "memory"];
+  navigate: [tab: "llm" | "tts" | "asr" | "other" | "tools" | "cast" | "rules" | "memory"];
 }>();
 
 function openGuide(): void {

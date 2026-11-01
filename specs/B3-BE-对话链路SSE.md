@@ -38,7 +38,7 @@ POST /api/sessions
 
 ```
 POST /api/sessions/{id}/messages
-{ "text": "我叫蔡智豪，软工专业" }
+{ "text": "我叫候选人，软工专业" }
 → text/event-stream
 ```
 
@@ -196,7 +196,7 @@ curl -s -X POST http://127.0.0.1:8080/api/sessions \
 # 记下 sessionId，然后发消息（SSE）
 curl -sN -X POST http://127.0.0.1:8080/api/sessions/1/messages \
   -H "Content-Type: application/json" \
-  -d '{"text":"我叫蔡智豪，软工专业，做过一个 JavaEE 的面试系统"}'
+  -d '{"text":"我叫候选人，软工专业，做过一个 JavaEE 的面试系统"}'
 ```
 
 要求看到：

@@ -87,6 +87,17 @@ public class InterviewSession {
     @Column(name = "reply_length_mode", length = 16)
     private String replyLengthMode = "normal";
 
+    /**
+     * 舞台媒体状态（issue #13）：背景 / 背景特效 / BGM / 音效 / 环境音 / 展示图片的
+     * 最后一次快照，JSON 字符串。
+     *
+     * <p>对应原版 {@code game_status} 里的同名字段（原版靠存档恢复，本项目直接用场次行）。
+     * 写入点集中在 {@code media/MediaStateStore}，由剧本事件调用；引擎每个事件结束后
+     * 的 {@code persist} 顺带落库，刷新后前端读 {@code GET /api/sessions/{id}} 即可恢复。
+     */
+    @Column(name = "media_state", columnDefinition = "CLOB")
+    private String mediaState;
+
     public Long getId() {
         return id;
     }
@@ -229,5 +240,13 @@ public class InterviewSession {
 
     public void setReplyLengthMode(String replyLengthMode) {
         this.replyLengthMode = replyLengthMode;
+    }
+
+    public String getMediaState() {
+        return mediaState;
+    }
+
+    public void setMediaState(String mediaState) {
+        this.mediaState = mediaState;
     }
 }

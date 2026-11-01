@@ -70,14 +70,14 @@ class ChatMessageSenderRoleTest {
         assertNull(opening.get(0).getSenderRoleId(), "system 消息的 sender_role_id 必须是 null");
 
         // 发一条消息，等异步落库
-        chatService.processMessage(sessionId, "我叫蔡智豪");
+        chatService.processMessage(sessionId, "我叫候选人");
 
         long deadline = System.currentTimeMillis() + WAIT_MILLIS;
         List<InterviewMessage> messages;
         while (true) {
             messages = messageRepository.findBySessionIdOrderBySeqAsc(sessionId);
             boolean userSaved = messages.stream().anyMatch(m -> InterviewMessage.ROLE_USER.equals(m.getRole())
-                    && "我叫蔡智豪".equals(m.getContent()));
+                    && "我叫候选人".equals(m.getContent()));
             long assistantCount = messages.stream()
                     .filter(m -> InterviewMessage.ROLE_ASSISTANT.equals(m.getRole())).count();
             if (userSaved && assistantCount >= 1) {

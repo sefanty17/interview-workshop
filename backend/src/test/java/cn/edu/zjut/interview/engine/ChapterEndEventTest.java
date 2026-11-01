@@ -104,7 +104,7 @@ class ChapterEndEventTest {
                 {"type": "chapter_end", "end_type": "ai_judged",
                  "options": [{"name": "deep", "next": "deep"}]}
                 """), sink, messageRepository, mock(InterviewChapterRepository.class),
-                mock(InterviewerRepository.class), null, objectMapper, "蔡智豪",
+                mock(InterviewerRepository.class), null, objectMapper, "候选人",
                 objectMapper.createObjectNode(), "basic");
 
         assertThrows(IllegalStateException.class, () -> new ChapterEndEvent().execute(ctx));
@@ -124,7 +124,7 @@ class ChapterEndEventTest {
         session.setCurrentChapter("basic");
         return new EngineContext(session, event(json), sink, messageRepository,
                 mock(InterviewChapterRepository.class), mock(InterviewerRepository.class),
-                llmClient, objectMapper, "蔡智豪", vars, "basic");
+                llmClient, objectMapper, "候选人", vars, "basic");
     }
 
     private JsonNode event(String json) {

@@ -47,14 +47,14 @@ class AffectionEvaluatorTest {
                 3, "风雪", "", "", AffectionEvaluator.AffectionVector.initial());
         InterviewMessage line = new InterviewMessage();
         line.setRole(InterviewMessage.ROLE_USER);
-        line.setContent("我叫蔡智豪");
-        line.setDisplayName("蔡智豪");
+        line.setContent("我叫候选人");
+        line.setDisplayName("候选人");
 
         String payload = AffectionEvaluator.buildPayload(List.of(npc), List.of(line));
         assertTrue(payload.startsWith("【在场角色与当前情感状态】"));
         assertTrue(payload.contains("- role_id=3: 风雪"));
         assertTrue(payload.contains("好感 10、信赖 5、亲密 0、默契 5、兴趣 15、思念 0"));
-        assertTrue(payload.contains("蔡智豪: 我叫蔡智豪"));
+        assertTrue(payload.contains("候选人: 我叫候选人"));
     }
 
     @Test

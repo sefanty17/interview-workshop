@@ -45,7 +45,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log("input editable:", editing);
   if (!editing) throw new Error("没能切到输入态");
 
-  await page.fill("#inputMessage", "我叫蔡智豪，软工专业");
+  await page.fill("#inputMessage", "我叫候选人，软工专业");
   await sleep(300);
   await page.screenshot({ path: OUT + "/01-before-send.jpg", type: "jpeg", quality: 82 });
 

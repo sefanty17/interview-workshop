@@ -348,14 +348,14 @@ CREATE TABLE interview_message (
 """
 
 USER_PROFILE_SEED = {
-    "nickname": "蔡智豪",
-    "signature": "浙江工业大学 · 计算机学院",
+    "nickname": "候选人",
+    "signature": "",
     "job_target": "java",
-    "school": "浙江工业大学",
-    "major": "软件工程",
-    "grade": "2025-2026 · 软工4班",
-    "student_no": "302024315025",
-    "resume_summary": "软件工程专业本科在读，主修 Java 后端方向。",
+    "school": "",
+    "major": "",
+    "grade": "",
+    "student_no": "",
+    "resume_summary": "",
 }
 
 

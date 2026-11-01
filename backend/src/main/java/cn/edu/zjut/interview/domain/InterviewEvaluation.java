@@ -54,6 +54,10 @@ public class InterviewEvaluation {
     @Column(name = "suggestions", columnDefinition = "CLOB")
     private String suggestions;
 
+    /** 逐题复盘，JSON 数组字符串；历史评估没有这一列时为 null。 */
+    @Column(name = "question_reviews", columnDefinition = "CLOB")
+    private String questionReviews;
+
     /** 出这份评估的模型名：换模型后旧评估不可比，得能看出来是谁打的。 */
     @Column(name = "model", length = 64)
     private String model;
@@ -123,6 +127,14 @@ public class InterviewEvaluation {
 
     public void setSuggestions(String suggestions) {
         this.suggestions = suggestions;
+    }
+
+    public String getQuestionReviews() {
+        return questionReviews;
+    }
+
+    public void setQuestionReviews(String questionReviews) {
+        this.questionReviews = questionReviews;
     }
 
     public String getModel() {

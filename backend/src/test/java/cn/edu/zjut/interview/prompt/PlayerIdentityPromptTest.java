@@ -53,10 +53,10 @@ class PlayerIdentityPromptTest {
 
     @Test
     void 玩家台词渲染成带名字的一行() {
-        List<LlmMessage> messages = memoryBuilder.build(List.of(player(1, "我会 Java。", "蔡智豪")));
+        List<LlmMessage> messages = memoryBuilder.build(List.of(player(1, "我会 Java。", "候选人")));
 
         assertEquals(1, messages.size());
-        assertEquals("蔡智豪: 我会 Java。", messages.get(0).content());
+        assertEquals("候选人: 我会 Java。", messages.get(0).content());
     }
 
     @Test
@@ -86,11 +86,11 @@ class PlayerIdentityPromptTest {
     @Test
     void 多个身份的台词各自带各自的名字() {
         List<LlmMessage> messages = memoryBuilder.build(List.of(
-                player(1, "我是候选人。", "蔡智豪"),
+                player(1, "我是候选人。", "候选人"),
                 player(2, "我是邻座面试官。", "面试官乙")));
 
         assertEquals(1, messages.size(), "连续 user 行合成一条");
-        assertEquals("蔡智豪: 我是候选人。\n面试官乙: 我是邻座面试官。", messages.get(0).content(),
+        assertEquals("候选人: 我是候选人。\n面试官乙: 我是邻座面试官。", messages.get(0).content(),
                 "换身份后两句话必须分得清是谁说的");
     }
 
@@ -147,22 +147,22 @@ class PlayerIdentityPromptTest {
     void 玩家块声明优先级并在前三项全空时返回空串() {
         assertEquals("", prompt.buildPlayerBlock(null, null, null), "全空不能塞空壳标题");
 
-        String block = prompt.buildPlayerBlock("蔡智豪", "浙工大软工大三", null);
+        String block = prompt.buildPlayerBlock("候选人", "浙工大软工大三", null);
         assertTrue(block.contains("【本局必须遵守：正在与你对话的「我」】"));
         assertTrue(block.contains("本节优先于上面人设"), "必须声明优先级");
-        assertTrue(block.contains("名字：蔡智豪"));
+        assertTrue(block.contains("名字：候选人"));
         assertTrue(block.contains("所有角色都看得到的设定"));
     }
 
     @Test
     void 只有说话者自己写的关系才当成态度注入() {
-        String fromSpeaker = prompt.buildPlayerBlock("蔡智豪", null,
+        String fromSpeaker = prompt.buildPlayerBlock("候选人", null,
                 new PlayerIdentityPrompt.RelationView("我是他的面试官",
                         PlayerIdentityPrompt.RelationSource.SPEAKER));
         assertTrue(fromSpeaker.contains("你和我的关系"), "说话者写的才是我和你的关系");
         assertTrue(fromSpeaker.contains("不要只是知道"));
 
-        String fromCounterparty = prompt.buildPlayerBlock("蔡智豪", null,
+        String fromCounterparty = prompt.buildPlayerBlock("候选人", null,
                 new PlayerIdentityPrompt.RelationView("他是我以前的同事",
                         PlayerIdentityPrompt.RelationSource.COUNTERPARTY));
         assertFalse(fromCounterparty.contains("你和我的关系"), "对方的说法不能当成说话者的态度");

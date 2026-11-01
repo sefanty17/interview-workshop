@@ -90,7 +90,7 @@ class ChatGodAgentLoopTest {
         CreateSessionResponse created = chatService.createSession(
                 new CreateSessionRequest("strict", "java", null));
 
-        chatService.processMessage(created.sessionId(), "我叫蔡智豪");
+        chatService.processMessage(created.sessionId(), "我叫候选人");
         // 自由会话（批次 4.1 起）不再落开场白：system + user + 1 条 assistant
         List<InterviewMessage> messages = waitUntilSettled(created.sessionId(), 3);
 
@@ -126,7 +126,7 @@ class ChatGodAgentLoopTest {
                                 "{\"role_id\":" + friendly.getId() + ",\"reason\":\"她想追问\"}")),
                         "tool_calls", null));
 
-        chatService.processMessage(sessionId, "我叫蔡智豪");
+        chatService.processMessage(sessionId, "我叫候选人");
         // 自由会话不再落开场白：system + user + 3 轮 assistant
         List<InterviewMessage> messages = waitUntilSettled(sessionId, 5);
 

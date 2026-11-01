@@ -1,5 +1,7 @@
 package cn.edu.zjut.interview.dto;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import java.util.List;
 
 /**
@@ -16,6 +18,9 @@ import java.util.List;
  * @param scriptCode     剧本编码
  * @param interviewerCode 面试官编码
  * @param messages       全部台词（按 seq 升序）
+ * @param mediaState     舞台媒体状态快照（issue #13），没切换过媒体时为 null；
+ *                       字段与 SSE payload 同名（background / backgroundEffect / music /
+ *                       sound / ambient / presentPic）
  */
 public record SessionDetailView(
         Long id,
@@ -28,5 +33,6 @@ public record SessionDetailView(
         Integer eventSequence,
         String scriptCode,
         String interviewerCode,
-        List<SessionMessageView> messages) {
+        List<SessionMessageView> messages,
+        JsonNode mediaState) {
 }

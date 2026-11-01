@@ -42,7 +42,7 @@
       <div class="rounded-2xl border border-white/20 bg-white/10 p-4 backdrop-blur-xl">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3">
-            <span class="text-base font-bold text-white">候选人 · 蔡智豪</span>
+            <span class="text-base font-bold text-white">候选人</span>
             <span class="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/70">应届毕业生 · 在读</span>
             <span class="rounded-full bg-[rgba(121,217,255,0.15)] px-2.5 py-0.5 text-xs text-[#79d9ff]">目标：{{ currentJob.name }}</span>
           </div>

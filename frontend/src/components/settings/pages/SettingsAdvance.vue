@@ -53,6 +53,11 @@
         <SettingsAdvanceOther />
       </div>
 
+      <!-- ====== 规则说明（评分口径 / 媒体降级） ====== -->
+      <div v-else-if="advanceTab === 'rules'" class="min-h-0 flex-1 overflow-y-auto">
+        <SettingsRules />
+      </div>
+
       <!-- ====== 永久记忆调试 ====== -->
       <div v-else-if="advanceTab === 'memory'" class="min-h-0 flex-1 overflow-y-auto">
         <SettingsMemoryDebug />
@@ -97,7 +102,7 @@
 
 <script setup lang="ts">
 import { computed, ref, type Component } from "vue";
-import { AudioLines, Cast, Cpu, Database, Mic, Wrench } from "@lucide/vue";
+import { AudioLines, BookOpen, Cast, Cpu, Database, Mic, Wrench } from "@lucide/vue";
 import { MenuPage } from "../../ui";
 import { Button } from "../../base";
 import SettingsAdvanceMenu from "./SettingsAdvanceMenu.vue";
@@ -108,8 +113,18 @@ import SettingsTts from "./SettingsTts.vue";
 import SettingsTools from "./SettingsTools.vue";
 import SettingsCast from "./SettingsCast.vue";
 import SettingsMemoryDebug from "./SettingsMemoryDebug.vue";
+import SettingsRules from "./SettingsRules.vue";
 
-type AdvanceTab = "menu" | "llm" | "tts" | "asr" | "tools" | "cast" | "other" | "memory";
+type AdvanceTab =
+  | "menu"
+  | "llm"
+  | "tts"
+  | "asr"
+  | "tools"
+  | "cast"
+  | "other"
+  | "rules"
+  | "memory";
 
 const TABS: { key: AdvanceTab; label: string }[] = [
   { key: "menu", label: "主菜单" },
@@ -119,6 +134,7 @@ const TABS: { key: AdvanceTab; label: string }[] = [
   { key: "tools", label: "工具配置" },
   { key: "cast", label: "投屏设置" },
   { key: "other", label: "其他高级设置" },
+  { key: "rules", label: "规则说明" },
 ];
 
 /** 子页未接入时的说明页内容（文案取自语言包 advance.menu.*） */
@@ -155,6 +171,11 @@ const PAGES: Record<
     title: "永久记忆调试",
     desc: "查看面试官当前的记忆库内容与真实上下文，用于排查记忆压缩与注入问题",
     icon: Database,
+  },
+  rules: {
+    title: "规则说明",
+    desc: "评分与评估口径、剧本媒体事件的降级规则、记录与报告约定",
+    icon: BookOpen,
   },
 };
 

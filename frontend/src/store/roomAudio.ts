@@ -6,9 +6,11 @@
  * convertFileSrc 后挂 <audio>。Web 上换成 HTMLAudioElement，路径直接当成 URL
  * （前端 public / 后端静态资源都能吃）。
  *
- * 资源不存在（404）时静默忽略：只 `console.debug`，不弹错、不打断剧本推进。
+ * 资源不存在（404）时静默忽略：只 `console.debug`，不弹错、不打断剧本推进；
+ * 同时在 {@link markMediaMissing} 里留个记号，声效面板据此显示「资源缺失」灰条。
  */
 import { watch } from "vue";
+import { markMediaMissing } from "./mediaAvailability";
 import { roomStore } from "./roomStore";
 
 /** 剧本里的资源路径 → 浏览器可请求的 URL（相对路径补前导斜杠）。 */
@@ -49,9 +51,12 @@ function fadeOut(el: HTMLAudioElement, fade: boolean): void {
   }, 50);
 }
 
-/** 静默标记：404 / 解码失败都只记 debug，不影响剧本继续。 */
+/** 静默标记：404 / 解码失败都只记 debug，不影响剧本继续；同时登记到可用性表。 */
 function muteErrors(el: HTMLAudioElement, kind: string, src: string): void {
-  el.addEventListener("error", () => console.debug(`[room-audio] ${kind} 资源不可用`, src));
+  el.addEventListener("error", () => {
+    console.debug(`[room-audio] ${kind} 资源不可用`, src);
+    markMediaMissing(src);
+  });
 }
 
 /**

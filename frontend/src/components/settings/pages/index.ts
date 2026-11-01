@@ -11,3 +11,4 @@ export { default as SettingsAdventure } from "./SettingsAdventure.vue";
 export { default as SettingsLog } from "./SettingsLog.vue";
 export { default as SettingsAsr } from "./SettingsAsr.vue";
 export { default as SettingsSchedule } from "./SettingsSchedule.vue";
+export { default as SettingsRules } from "./SettingsRules.vue";

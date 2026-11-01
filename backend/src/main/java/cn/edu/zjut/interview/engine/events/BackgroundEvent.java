@@ -3,6 +3,7 @@ package cn.edu.zjut.interview.engine.events;
 import cn.edu.zjut.interview.engine.EngineContext;
 import cn.edu.zjut.interview.engine.ScriptEvent;
 import cn.edu.zjut.interview.engine.payload.BackgroundPayload;
+import cn.edu.zjut.interview.media.MediaStateStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,7 +16,8 @@ import org.slf4j.LoggerFactory;
  * emit {@code script:background}（{@code BackgroundPayload{imagePath, transition, duration?}}，
  * {@code transition} 缺省 1.0）。
  *
- * <p>本项目没有剧本目录与存档快照，路径原样下发，也不保存背景覆盖状态。
+ * <p>本项目没有剧本目录与存档快照，路径原样下发；覆盖状态写进
+ * {@code interview_session.media_state}（issue #13），刷新后可恢复。
  */
 public class BackgroundEvent implements ScriptEvent {
 
@@ -31,6 +33,7 @@ public class BackgroundEvent implements ScriptEvent {
                 ? event.get("transition").asDouble()
                 : 1.0;
 
+        MediaStateStore.applyBackground(ctx.session(), ctx.objectMapper(), imagePath, transition);
         ctx.sink().background(new BackgroundPayload(imagePath, transition, ScriptEvent.parseDuration(event)));
         log.info("[BackgroundEvent] 背景切换: {}", imagePath);
         return null;

@@ -245,4 +245,4 @@ _叮叮叮_
 “帮我算算，我是不是已经找到比蛋糕还甜的人了。”', '1.“【冷淡】今天心情不好，想找几个人杀掉。【盯着】你好像是个不错的目标，就你怎么样？（拿起法杖对着钦灵）”
 2.“【生气】无聊的话还是少说的好。（双手合上了魔法书）【无奈】劝你还是少看点歪门邪理，多学点魔法。”', '风雪施展魔法中...', 'image', 1.25, 0.0, 65.0, 5, 25, '钦灵', 'LingChat Studio', '严格技术面', '坐吧。今天不问废话，先说说你自己——一分钟，超时我会打断。', 3, 1, 1);
 
-INSERT INTO user_profile (nickname, signature, job_target, school, major, grade, student_no, resume_summary) VALUES ('蔡智豪', '浙江工业大学 · 计算机学院', 'java', '浙江工业大学', '软件工程', '2025-2026 · 软工4班', '302024315025', '软件工程专业本科在读，主修 Java 后端方向。');
+INSERT INTO user_profile (nickname, signature, job_target, school, major, grade, student_no, resume_summary) VALUES ('候选人', '', 'java', '', '', '', '', '');

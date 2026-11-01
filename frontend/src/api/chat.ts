@@ -76,6 +76,27 @@ export interface SessionMessage {
   userMessageSeq: number | null;
 }
 
+/**
+ * 舞台媒体快照（`interview_session.media_state`，issue #13）。
+ *
+ * 字段名与后端 `MediaStateStore` 写出的 JSON、以及 SSE payload 的 camelCase 一致，
+ * 前端不需要第二套映射。空字段表示「该阶段没下发过这类事件」。
+ */
+export interface SessionMediaState {
+  background?: { imagePath: string; transition: number } | null;
+  backgroundEffect?: { effect: string } | null;
+  music?: { musicPath: string; playbackSpeed?: number; playing?: boolean } | null;
+  /** 一次性音效只记录最后一条，**不恢复**（刷新重放会凭空多一声） */
+  sound?: { soundPath: string; at: number } | null;
+  ambient?: Array<{
+    ambientPath: string;
+    volume?: number;
+    loop?: boolean;
+    fade?: boolean;
+  }> | null;
+  presentPic?: { imagePath: string; scale?: number } | null;
+}
+
 /** `GET /api/sessions/{id}` 的返回体（规格 S4 §改动1-4）。
  *
  *  `messages` 不在此规格的字段清单里，但后端 `SessionDetailView` 确实带它，
@@ -92,6 +113,8 @@ export interface SessionDetail {
   scriptCode: string | null;
   interviewerCode: string;
   messages: SessionMessage[];
+  /** 舞台媒体快照；null = 这场从没下发过媒体事件 */
+  mediaState: SessionMediaState | null;
 }
 
 /** `script:narration` 的 data（字段名照抄后端 SseEventSink，不许改）。 */
@@ -292,7 +315,7 @@ export interface SessionSummary {
   status: string;
   score: number | null;
   jobCode: string;
-  scriptCode: string;
+  scriptCode: string | null;
   interviewerCode: string;
   startedAt: string | null;
   endedAt: string | null;
@@ -314,6 +337,14 @@ export async function fetchSessions(status?: string): Promise<SessionSummary[]> 
     throw new Error(`fetchSessions 失败：HTTP ${response.status}`);
   }
   return (await response.json()) as SessionSummary[];
+}
+
+/** 删除一场后端面试（连带台词与评估），记录页批量删除用。 */
+export async function deleteSession(sessionId: number): Promise<void> {
+  const response = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`deleteSession 失败：HTTP ${response.status}`);
+  }
 }
 
 /**

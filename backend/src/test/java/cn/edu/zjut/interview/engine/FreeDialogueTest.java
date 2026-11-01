@@ -236,8 +236,8 @@ class FreeDialogueTest {
     void userPlaceholderFallsBackToNiWhenProfileHasNoName() {
         assertEquals("于是钦灵和你出门", ScriptFunctions.replacePlaceholders("于是钦灵和{user}出门", "候选人", null));
         assertEquals("于是钦灵和你出门", ScriptFunctions.replacePlaceholders("于是钦灵和{user}出门", "候选人", "  "));
-        assertEquals("于是钦灵和蔡智豪出门", ScriptFunctions.replacePlaceholders("于是钦灵和{user}出门", "候选人", "蔡智豪"));
-        assertEquals("你好，候选人", ScriptFunctions.replacePlaceholders("你好，%player%", "候选人", "蔡智豪"),
+        assertEquals("于是钦灵和候选人出门", ScriptFunctions.replacePlaceholders("于是钦灵和{user}出门", "候选人", "候选人"));
+        assertEquals("你好，候选人", ScriptFunctions.replacePlaceholders("你好，%player%", "候选人", "候选人"),
                 "%player% 仍按原版取 player 名");
     }
 

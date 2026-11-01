@@ -109,6 +109,47 @@
 
         <div class="mb-4 h-px bg-white/5"></div>
 
+        <!-- ===== 剧本音轨（script:music / sound / ambient 的真实下发结果） =====
+             路径不存在时（public 下只有 audio_effects，没有 BGM / 环境音目录）
+             渲染成占位灰条，别假装正在播。 -->
+        <div v-if="scriptTracks.length" class="mb-4">
+          <div class="mb-3 flex items-center justify-between">
+            <span class="flex items-center gap-2 text-sm font-semibold text-gray-300">
+              <AudioLines :size="14" class="text-[#79d9ff]" />
+              剧本音轨
+              <span class="text-xs font-normal text-gray-500">({{ scriptTracks.length }})</span>
+            </span>
+            <span class="text-[10px] text-gray-500">随剧本事件自动切换</span>
+          </div>
+
+          <div class="space-y-1.5">
+            <div
+              v-for="track in scriptTracks"
+              :key="`${track.kind}-${track.url}`"
+              class="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-1.5"
+            >
+              <!-- 缺失资源：灰条占位 -->
+              <div
+                v-if="isMediaMissing(track.url)"
+                class="flex items-center gap-2 text-[11px] text-gray-500"
+              >
+                <span class="h-2 w-2 shrink-0 rounded-full bg-white/20"></span>
+                <span class="shrink-0">{{ track.kind }}</span>
+                <span class="flex-1 truncate text-gray-600 line-through">{{ track.src }}</span>
+                <span class="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px]">
+                  资源缺失
+                </span>
+              </div>
+              <!-- 正常：显示正在播的一轨 -->
+              <div v-else class="flex items-center gap-2 text-[11px] text-gray-300">
+                <span class="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[#79d9ff]"></span>
+                <span class="shrink-0 text-gray-400">{{ track.kind }}</span>
+                <span class="flex-1 truncate">{{ track.src }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- ===== BGM 区域 ===== -->
         <div class="mb-4">
           <div class="mb-3 flex items-center justify-between">
@@ -326,6 +367,9 @@ import {
 } from "../../../constants/spectrum";
 import { alertDialog } from "../../../store/dialogStore";
 import { extraDemo } from "../../../store/extraDemo";
+import { isMediaMissing } from "../../../store/mediaAvailability";
+import { resolveAssetUrl } from "../../../store/roomAudio";
+import { roomStore } from "../../../store/roomStore";
 import { store, updateSettings } from "../../../store/appStore";
 import Button from "../../base/widget/Button.vue";
 import Toggle from "../../base/widget/Toggle.vue";
@@ -373,6 +417,28 @@ const setSpectrumStyle = (style: SpectrumStyle) => {
 const onColorInput = (field: "spectrumColor1" | "spectrumColor2", e: Event) => {
   updateSettings({ [field]: (e.target as HTMLInputElement).value });
 };
+
+// ===== 剧本音轨：roomStore 里由 script:music / sound / ambient 写进去的真实音轨 =====
+interface ScriptTrack {
+  /** 中文类别（BGM / 环境音 / 音效） */
+  kind: string;
+  /** 剧本里写的原始路径 */
+  src: string;
+  /** 浏览器实际请求的 URL（可用性表的键） */
+  url: string;
+}
+
+const scriptTracks = computed<ScriptTrack[]>(() => {
+  const list: ScriptTrack[] = [];
+  const add = (kind: string, src: string) => {
+    if (!src) return;
+    list.push({ kind, src, url: resolveAssetUrl(src) });
+  };
+  add("BGM", roomStore.bgm.src);
+  roomStore.ambient.forEach((track) => add("环境音", track.src));
+  add("音效", roomStore.sound.src);
+  return list;
+});
 
 // ===== 是否有活跃音频在播放（控制图标闪烁，暂停/停止时不闪） =====
 const hasActiveAudio = computed(() => {

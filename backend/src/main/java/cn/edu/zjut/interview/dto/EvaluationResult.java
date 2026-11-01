@@ -11,6 +11,7 @@ import java.util.List;
  *
  * @param overallScore 加权总分 {@code round(Σ 各维度分 × 权重)}
  * @param dimensions   固定四个，顺序 technical / depth / logic / fit
+ * @param questions    逐题复盘；历史评估没有这一项时为空数组
  */
 public record EvaluationResult(
         Long sessionId,
@@ -21,6 +22,7 @@ public record EvaluationResult(
         List<String> weaknesses,
         List<String> suggestions,
         List<DimensionScore> dimensions,
+        List<QuestionReview> questions,
         String model,
         LocalDateTime createdAt) {
 
@@ -31,5 +33,19 @@ public record EvaluationResult(
      * 单独成文件会让人以为别处也能用。
      */
     public record DimensionScore(String code, String label, int score, String comment) {
+    }
+
+    /**
+     * 一道题的复盘（<b>本项目扩展（课设指标 ③）</b>）。
+     *
+     * <p>{@code quote} 是模型从求职者回答里摘出的原话。报告页要求「至少一条建议引用用户原话」，
+     * 靠提示词里强制摘录实现，而不是前端自己截字符串——前端截出来的不一定是关键句。
+     */
+    public record QuestionReview(int index,
+                                 String question,
+                                 String quote,
+                                 int score,
+                                 String comment,
+                                 String suggestion) {
     }
 }

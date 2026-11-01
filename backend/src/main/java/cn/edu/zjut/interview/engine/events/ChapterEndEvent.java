@@ -22,7 +22,7 @@ import java.util.List;
  * <ul>
  *   <li>{@code linear}：{@code next ?: next_chapter ?: "end"}</li>
  *   <li>{@code branching}：按变量求值选第一个命中的 option；一轮没命中再找 {@code default}</li>
- *   <li>{@code ai_judged}：必须调 LLM，LLM 不可用就抛异常终止剧本（不回落默认分支）</li>
+ *   <li>{@code ai_judged}：必须调 LLM；LLM 调用失败时回落第一个可选项，避免整场卡死</li>
  * </ul>
  */
 public class ChapterEndEvent implements ScriptEvent {
@@ -125,7 +125,15 @@ public class ChapterEndEvent implements ScriptEvent {
                 + "\n\n请只回复章节名称本身，不要包含其他内容。";
 
         log.info("[ChapterEndEvent] 请求 LLM 判断下一章节...");
-        String response = llm.complete(List.of(LlmMessage.user(fullPrompt)));
+        String response;
+        try {
+            response = llm.complete(List.of(LlmMessage.user(fullPrompt)));
+        } catch (Exception e) {
+            // 大模型临时不可用（超时 / 限流 / 网络）时不能把整场面试卡死：
+            // 回落第一个可选项继续走，至少让剧本能正常收尾
+            log.warn("[ChapterEndEvent] LLM 判断失败，回落第一个可选章节：{}", e.toString());
+            return firstOptionNext(options);
+        }
         response = response == null ? "" : response.trim();
         log.info("[ChapterEndEvent] LLM 判断结果: '{}'", response);
 
@@ -133,6 +141,11 @@ public class ChapterEndEvent implements ScriptEvent {
         if (matched != null) {
             return matched;
         }
+        return firstOptionNext(options);
+    }
+
+    /** 没有匹配结果时的兜底：第一个可选项的 next，再没有就结束剧本。 */
+    private String firstOptionNext(JsonNode options) {
         if (!options.isEmpty()) {
             JsonNode firstNext = options.get(0).get("next");
             if (firstNext != null && firstNext.isTextual()) {

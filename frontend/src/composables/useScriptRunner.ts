@@ -198,7 +198,11 @@ export async function runScriptStream(
     }
   } catch (error) {
     console.warn("[interview] 剧本推进失败", error);
-    if (!buffered.length) return false;
+    // 流中断不能把界面永远停在「思考中」：交回输入态并透出错误，
+    // 同时视为后端已接管，避免回落本地假回复把剧本场次演成 mock 数据
+    roomStore.state = "input";
+    hooks.onError?.(error);
+    if (!buffered.length) return true;
   }
 
   if (buffered.length) {
@@ -215,6 +219,9 @@ export async function runScriptStream(
 
   applyPendingChoice();
   if (scriptBlocked) roomStore.state = "input";
+  // script:end 且没有新台词时也要切回 input：房间靠这个状态触发自动收尾，
+  // 否则最后一句用户输入提交后会一直停在「思考中」
+  if (ended) roomStore.state = "input";
   // 没有新台词但引擎已停在阻塞点 / 已结束，同样算后端接管
   return scriptBlocked || ended;
 }
