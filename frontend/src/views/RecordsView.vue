@@ -85,11 +85,19 @@
           <div class="my-2 border-b border-dashed border-white/10"></div>
 
           <div class="flex items-baseline gap-2">
-            <span class="text-2xl font-bold text-[#79d9ff]">{{ r.score }} 分</span>
-            <span class="text-xs text-white/50">{{ r.questions.length }} 题 · {{ minutes(r.duration) }} 分钟</span>
+            <template v-if="isFreeSession(r.id)">
+              <span class="text-base font-bold text-white/75">自由对话</span>
+              <span class="text-xs text-white/50">不计分 · 不进成长曲线</span>
+            </template>
+            <template v-else>
+              <span class="text-2xl font-bold text-[#79d9ff]">{{ r.score }} 分</span>
+              <span class="text-xs text-white/50">{{ r.questions.length }} 题 · {{ minutes(r.duration) }} 分钟</span>
+            </template>
           </div>
 
-          <p class="mt-2 line-clamp-2 text-xs italic text-white/40">{{ excerpt(r) }}</p>
+          <p class="mt-2 line-clamp-2 text-xs italic text-white/40">
+            {{ isFreeSession(r.id) ? "自由对话场次只保留对话记录，没有评分与逐题复盘。" : excerpt(r) }}
+          </p>
 
           <div v-if="!batchMode" class="mt-auto flex flex-wrap gap-2 pt-3">
             <button
@@ -326,9 +334,10 @@ async function loadRemoteRecords() {
   if (!(await isBackendUp())) return;
   try {
     const sessions = await fetchSessions("finished");
-    remoteRecords.value = sessions.map(toRecord);
+    // 先落 summary 再赋列表：卡片渲染要读 scriptCode 判断自由对话
     remoteSummaries.clear();
     sessions.forEach((summary) => remoteSummaries.set("s-" + summary.id, summary));
+    remoteRecords.value = sessions.map(toRecord);
     pruneDuplicateLocalRecords(new Set(sessions.map((s) => s.id)));
   } catch (error) {
     console.warn("[records] 拉取后端场次失败，只用本地记录", error);
@@ -376,6 +385,12 @@ function toRecord(summary: SessionSummary): InterviewRecord {
 
 function isRemote(r: InterviewRecord): boolean {
   return r.id.startsWith("s-");
+}
+
+/** 后端场次 summary.scriptCode 为空即自由对话：不计分、不进成长曲线 */
+function isFreeSession(id: string): boolean {
+  const summary = remoteSummaries.get(id);
+  return !!summary && !summary.scriptCode;
 }
 
 onBeforeUnmount(() => {

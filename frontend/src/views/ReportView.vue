@@ -1,7 +1,14 @@
 <template>
   <PageShell title="面试报告">
     <template v-if="record">
-      <MenuItem size="large" title="总分" icon="◎">
+      <MenuItem v-if="freeDialogue" size="large" title="自由对话场次" icon="◎">
+        <p class="text-sm leading-relaxed text-white/70">
+          本场是自由对话：没有固定题单，所以不产生评分、逐题复盘与对话总结，也不计入成长曲线。
+        </p>
+        <p class="mt-2 text-xs text-white/45">本场共 {{ questionCount }} 轮作答。需要评分请从剧本面试入口开始。</p>
+      </MenuItem>
+
+      <MenuItem v-if="!freeDialogue" size="large" title="总分" icon="◎">
         <div class="mb-4 text-xs text-white/50">
           {{ record.jobName }} · {{ record.personaName }} · {{ record.date }} · {{ record.duration
           }}{{ evaluation ? " · AI 评估" : "" }}
@@ -40,7 +47,7 @@
         </div>
       </MenuItem>
 
-      <MenuItem size="large" title="逐题复盘" icon="≡">
+      <MenuItem v-if="!freeDialogue" size="large" title="逐题复盘" icon="≡">
         <div
           v-for="(q, i) in questionReviews"
           :key="q.key"
@@ -229,6 +236,8 @@ const router = useRouter();
 const remoteRecord = ref<InterviewRecord | null>(null);
 /** 后端场次没有逐题明细，题数用详情里的玩家发言条数还原 */
 const remoteQuestionCount = ref(0);
+/** 自由对话场次：后端 scriptCode 为空。显式提示，避免 0 分/0 题看起来像考砸了 */
+const freeDialogue = ref(false);
 
 const record = computed(
   () => store.records.find((r) => String(r.id) === String(route.params.id)) ?? remoteRecord.value,
@@ -250,11 +259,15 @@ const sid = computed(() => {
  */
 async function loadRemoteRecord() {
   const id = sid.value;
-  if (id === null || record.value) return;
+  if (id === null) return;
   try {
     const detail = await fetchSessionDetail(id);
+    // 自由对话没有 scriptCode：报告页改成提示，不跑评估也不再显示 0 分/0 题
+    freeDialogue.value = !detail.scriptCode;
     // 玩家发言条数 = 实际作答轮次（剧本/自由都按 role=user 记账）
     remoteQuestionCount.value = detail.messages.filter((m) => m.role === "user").length;
+    // 本地存档已经能渲染时，这次只借用详情判断场次类型
+    if (record.value) return;
     remoteRecord.value = {
       id: `s-${id}`,
       // 报告头部按场次真实字段还原：岗位显示中文名、面试官显示姓名，而不是库里的 code
@@ -285,7 +298,7 @@ const regenError = ref("");
  */
 async function loadEvaluation() {
   const id = sid.value;
-  if (id === null || skipEval.value) return;
+  if (id === null || skipEval.value || freeDialogue.value) return;
   evalLoading.value = true;
   evalError.value = "";
   try {
@@ -327,7 +340,7 @@ let summaryPollTimer: number | undefined;
  */
 async function loadSummary(attempt = 0) {
   const id = sid.value;
-  if (id === null || skipEval.value) return;
+  if (id === null || skipEval.value || freeDialogue.value) return;
   if (summaryPollTimer) {
     window.clearTimeout(summaryPollTimer);
     summaryPollTimer = undefined;

@@ -292,7 +292,7 @@ export interface SessionSummary {
   status: string;
   score: number | null;
   jobCode: string;
-  scriptCode: string;
+  scriptCode: string | null;
   interviewerCode: string;
   startedAt: string | null;
   endedAt: string | null;
