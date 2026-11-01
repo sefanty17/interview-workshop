@@ -43,8 +43,29 @@ public final class EvaluationPrompter {
                 "depth":     {"score": 0, "comment": "..."},
                 "logic":     {"score": 0, "comment": "..."},
                 "fit":       {"score": 0, "comment": "..."}
-              }
+              },
+              "questions": [
+                {
+                  "index": 1,
+                  "question": "面试官这一轮的提问（不超过 30 字）",
+                  "quote": "求职者回答里最能说明水平的一句原话（不超过 30 字，必须逐字摘录，不要改写）",
+                  "score": 0,
+                  "comment": "这一题的回答点评（不超过 40 字）",
+                  "suggestion": "这一题的具体改进动作（不超过 40 字）"
+                }
+              ]
             }""";
+
+    /**
+     * 逐题复盘的约束。最多 5 题：输出预算有限（默认 max_tokens 2048），
+     * 题数一多整份 JSON 就会被截断，反而连总分都拿不到；超过 5 轮时挑信息量最大的几题。
+     */
+    private static final String QUESTION_RULE = """
+            逐题复盘要求：
+            - questions 最多 5 条；实际问答轮次超过 5 时，挑信息量最大的 5 题，不要硬凑。
+            - question 写面试官的提问要点，不要照抄整段台词。
+            - quote 必须逐字摘自求职者的回答，不许改写、不许编造；找不到合适原话就留空字符串。
+            - score 是这一题的回答得分（0-100 整数），comment 与 suggestion 各不超过 40 字。""";
 
     /**
      * user 消息的长度预算（字符数）。
@@ -78,6 +99,7 @@ public final class EvaluationPrompter {
                     .append(criterionOf(dimension)).append("（权重 ").append(dimension.weight()).append("）\n");
         }
         builder.append('\n').append(SCORE_ANCHOR).append('\n').append('\n');
+        builder.append(QUESTION_RULE).append('\n').append('\n');
         builder.append("请严格按下面的 JSON 模板输出，四个维度缺一不可，score 为 0-100 的整数：").append('\n');
         builder.append(JSON_TEMPLATE);
         return builder.toString();

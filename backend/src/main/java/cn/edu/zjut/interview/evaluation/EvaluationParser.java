@@ -44,7 +44,13 @@ public final class EvaluationParser {
                                   List<String> weaknesses,
                                   List<String> suggestions,
                                   Map<String, DimScore> dimensions,
+                                  List<QuestionDraft> questions,
                                   int overall) {
+    }
+
+    /** 单题复盘草稿：{@code quote} 必须是求职者原话片段，模型没给就留空。 */
+    public record QuestionDraft(int index, String question, String quote,
+                                int score, String comment, String suggestion) {
     }
 
     /**
@@ -100,7 +106,38 @@ public final class EvaluationParser {
             weighted += score * dimension.weight();
         }
         return new EvaluationDraft(summary, strengths, weaknesses, suggestions, scores,
-                (int) Math.round(weighted));
+                questionReviews(root.path("questions")), (int) Math.round(weighted));
+    }
+
+    /**
+     * 逐题复盘（可选）。模型没给或格式不对时降级成空数组：
+     * 历史评估本来就没有这一项，报告页据此显示「本场没有逐题记录」。
+     */
+    private static List<QuestionDraft> questionReviews(JsonNode node) {
+        if (node == null || !node.isArray()) {
+            return List.of();
+        }
+        List<QuestionDraft> reviews = new ArrayList<>(node.size());
+        int fallbackIndex = 1;
+        for (JsonNode item : node) {
+            if (!item.isObject()) {
+                continue;
+            }
+            int index = item.path("index").isNumber() ? item.path("index").asInt() : fallbackIndex;
+            String question = text(item, "question");
+            String quote = text(item, "quote");
+            int score = item.path("score").isNumber()
+                    ? clamp((int) Math.round(item.path("score").asDouble())) : 0;
+            reviews.add(new QuestionDraft(index, question, quote, score,
+                    text(item, "comment"), text(item, "suggestion")));
+            fallbackIndex++;
+        }
+        return reviews;
+    }
+
+    private static String text(JsonNode node, String field) {
+        JsonNode value = node.path(field);
+        return value.isTextual() ? value.asText() : "";
     }
 
     /** 非数组（含字符串、对象、缺失）都降级成空数组。 */

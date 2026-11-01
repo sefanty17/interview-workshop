@@ -56,6 +56,10 @@ public record InterviewPlan(
         }
         sb.append("轮次控制：").append(nullToEmpty(pacing)).append('\n');
         sb.append("结束条件：").append(nullToEmpty(endCondition)).append('\n');
+        // 题库去重：模型最容易犯的错是换个说法把同一道题再问一遍，
+        // 靠历史记录不足以约束，必须在编排段里明确禁止。
+        sb.append("提问规则：每次只提一个问题；提问前先对照对话历史，")
+                .append("已经问过的题目不要再问，也不要换一种说法重复。\n");
         return sb.toString();
     }
 

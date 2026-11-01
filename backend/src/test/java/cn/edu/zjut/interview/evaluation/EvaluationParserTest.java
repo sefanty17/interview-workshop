@@ -154,4 +154,46 @@ class EvaluationParserTest {
         assertEquals("总结", draft.summary());
         assertEquals(80, draft.overall(), "锦上添花的字段坏了不该影响总分");
     }
+
+    /** 9. 逐题复盘：正常解析出题面、原话摘录、单题分与建议。 */
+    @Test
+    void 解析逐题复盘与原话摘录() {
+        String raw = """
+                {"summary":"还行","questions":[
+                   {"index":1,"question":"说说 JVM 内存模型","quote":"堆和栈，方法区在元空间",
+                    "score":75,"comment":"概念准确但没讲 GC","suggestion":"补一句分代回收的触发条件"},
+                   {"index":2,"question":"Spring 事务传播级别","quote":"只用过默认的 REQUIRED",
+                    "score":60,"comment":"没区分 REQUIRES_NEW","suggestion":"对比两种传播级别的回滚边界"}
+                ],"dimensions": {
+                   "technical": {"score": 70, "comment": "a"},
+                   "depth":     {"score": 70, "comment": "b"},
+                   "logic":     {"score": 70, "comment": "c"},
+                   "fit":       {"score": 70, "comment": "d"}
+                }}""";
+
+        EvaluationParser.EvaluationDraft draft = EvaluationParser.parse(raw);
+
+        assertEquals(2, draft.questions().size());
+        assertEquals("说说 JVM 内存模型", draft.questions().get(0).question());
+        assertEquals("堆和栈，方法区在元空间", draft.questions().get(0).quote());
+        assertEquals(75, draft.questions().get(0).score());
+        assertEquals("补一句分代回收的触发条件", draft.questions().get(0).suggestion());
+    }
+
+    /** 10. 模型没给 questions（历史评估 / 模型偷懒）：降级为空数组，总分照常。 */
+    @Test
+    void 缺少逐题复盘时降级为空数组() {
+        String raw = """
+                {"dimensions": {
+                   "technical": {"score": 80, "comment": "a"},
+                   "depth":     {"score": 80, "comment": "b"},
+                   "logic":     {"score": 80, "comment": "c"},
+                   "fit":       {"score": 80, "comment": "d"}
+                }}""";
+
+        EvaluationParser.EvaluationDraft draft = EvaluationParser.parse(raw);
+
+        assertTrue(draft.questions().isEmpty());
+        assertEquals(80, draft.overall());
+    }
 }

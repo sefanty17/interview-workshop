@@ -179,12 +179,19 @@ const card = computed(() => cardForCode(persona.value.code));
 /** 剧本面试才有固定题量；自由面试不设上限，用户点「结束面试」才收尾 */
 const isScript = computed(() => store.session.mode === "script");
 
-/** 题库：先按知识点偏好排序。剧本面试截取 settings.questionCount 道，自由面试用整份循环 */
+/** 题库：先按知识点偏好排序、按题面去重。剧本面试截取 settings.questionCount 道 */
 const questionPool = computed(() => {
   const all = questionBank.filter((q) => q.jobId === store.session.jobId);
   const preferred = all.filter((q) => store.settings.kps.includes(q.kp));
   const rest = all.filter((q) => !preferred.includes(q));
-  const ordered = [...preferred, ...rest];
+  // 题库去重：同一道题可能被不同知识点重复收录，按题面文本去掉重复
+  const seen = new Set<string>();
+  const ordered = [...preferred, ...rest].filter((q) => {
+    const text = q.text.trim();
+    if (seen.has(text)) return false;
+    seen.add(text);
+    return true;
+  });
   if (!isScript.value) return ordered;
   const target = Math.max(3, Math.min(8, store.settings.questionCount));
   return ordered.slice(0, target);
@@ -306,8 +313,8 @@ function emitAi(
 function currentQuestion() {
   const pool = questionPool.value;
   if (!pool.length) return undefined;
-  const idx = isScript.value ? store.session.questionIndex : store.session.questionIndex % pool.length;
-  return pool[idx];
+  // 题库不循环：问完最后一道就收尾，避免同一道题换个顺序再问一遍
+  return pool[store.session.questionIndex];
 }
 
 function kpName(id: string) {
@@ -686,9 +693,8 @@ async function finish() {
   const answeredTurns = answeredCount.value;
   const tooShort = answeredTurns < 3;
   const total = tooShort ? 0 : Math.max(1, answeredTurns);
-  // 自由面试题库会循环，按取模还原实际问过的题序
-  const answered = Array.from({ length: total }, (_, i) => pool[isScript.value ? i : i % (pool.length || 1)])
-    .filter((q): q is (typeof questionBank)[number] => !!q);
+  // 题库不再循环，实际问过的就是前 answeredTurns 道
+  const answered = pool.slice(0, total).filter((q): q is (typeof questionBank)[number] => !!q);
   const base = 79 + (answered.length % 4);
   const dims = dimensionNames.map((name, i) => ({
     name,

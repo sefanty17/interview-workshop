@@ -17,6 +17,17 @@ export interface DimensionScore {
   comment: string | null;
 }
 
+/** 单题复盘，对应后端 `EvaluationResult.QuestionReview`。 */
+export interface QuestionReview {
+  index: number;
+  question: string;
+  /** 求职者回答里的原话摘录，模型没摘到时为 null 或空串 */
+  quote: string | null;
+  score: number;
+  comment: string | null;
+  suggestion: string | null;
+}
+
 /** 一次评估的完整结果，对应后端 `EvaluationResult`。后端可空字段一律落成 `| null`。 */
 export interface EvaluationResult {
   sessionId: number;
@@ -27,6 +38,8 @@ export interface EvaluationResult {
   weaknesses: string[];
   suggestions: string[];
   dimensions: DimensionScore[];
+  /** 历史评估没有逐题复盘，后端返回空数组，前端显示「重新生成」入口 */
+  questions: QuestionReview[];
   model: string | null;
   createdAt: string | null;
 }
