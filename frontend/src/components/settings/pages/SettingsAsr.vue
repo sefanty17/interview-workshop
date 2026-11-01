@@ -316,7 +316,7 @@
               aria-label="麦克风设备"
               @change="setStringFromEvent('asr_mic_device', $event)"
             >
-              <option v-for="device in MIC_DEVICES" :key="device.value" :value="device.value" class="bg-slate-800">
+              <option v-for="device in micDevices" :key="device.value" :value="device.value" class="bg-slate-800">
                 {{ device.label }}
               </option>
             </select>
@@ -324,11 +324,12 @@
           <button
             type="button"
             title="刷新设备列表"
-            class="inline-flex h-9 items-center justify-center gap-1.75 rounded-md border border-white/15 bg-white/5 px-3 text-[13px] text-white/80 transition-colors duration-200 hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-50"
-            @click="requireBackend('刷新麦克风设备列表')"
+            class="inline-flex h-9 items-center justify-center gap-1.75 rounded-md border border-white/15 bg-white/5 px-3 text-[13px] text-white/80 transition-colors duration-200 hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-50 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="refreshingDevices"
+            @click="refreshMicDevices"
           >
             <RefreshCw :size="16" />
-            <span>刷新设备列表</span>
+            <span>{{ refreshingDevices ? "刷新中…" : "刷新设备列表" }}</span>
           </button>
         </div>
 
@@ -556,12 +557,13 @@
         <div class="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            class="inline-flex min-h-9 items-center justify-center gap-1.75 rounded-md border border-cyan-300/40 bg-cyan-600/35 px-3.5 py-2 text-[13px] font-semibold text-cyan-50 transition-colors duration-200 hover:bg-cyan-600/50"
+            class="inline-flex min-h-9 items-center justify-center gap-1.75 rounded-md border border-cyan-300/40 bg-cyan-600/35 px-3.5 py-2 text-[13px] font-semibold text-cyan-50 transition-colors duration-200 hover:bg-cyan-600/50 disabled:cursor-not-allowed disabled:opacity-60"
             data-testid="asr-test-button"
-            @click="requireBackend('测试连接')"
+            :disabled="testingConnection"
+            @click="testConnection"
           >
             <Play :size="16" />
-            <span>测试连接</span>
+            <span>{{ testingConnection ? "测试中…" : "测试连接" }}</span>
           </button>
           <p v-if="store.settings.asr_last_result" class="max-w-md text-sm text-green-400">
             识别结果：{{ store.settings.asr_last_result }}
@@ -697,18 +699,20 @@
         class="min-h-24 w-full rounded-lg border border-white/10 bg-black/25 px-3 py-2.5 text-[13px] leading-6 text-white"
       >
         <span v-if="store.settings.asr_last_result">{{ store.settings.asr_last_result }}</span>
+        <span v-else-if="testRecognizing" class="text-white/40">识别中…</span>
         <span v-else class="text-white/40">未识别到语音，请重试</span>
       </div>
 
       <div class="mt-4 flex flex-wrap items-center gap-3">
         <button
           type="button"
-          class="inline-flex min-h-9 items-center justify-center gap-1.75 rounded-md border border-cyan-300/40 bg-cyan-600/35 px-3.5 py-2 text-[13px] font-semibold text-cyan-50 transition-colors duration-200 hover:bg-cyan-600/50"
+          class="inline-flex min-h-9 items-center justify-center gap-1.75 rounded-md border border-cyan-300/40 bg-cyan-600/35 px-3.5 py-2 text-[13px] font-semibold text-cyan-50 transition-colors duration-200 hover:bg-cyan-600/50 disabled:cursor-not-allowed disabled:opacity-60"
           data-testid="asr-record-button"
-          @click="requireBackend('开始录音')"
+          :disabled="testRecording || testRecognizing"
+          @click="startTestRecording"
         >
           <Mic :size="16" />
-          开始录音
+          {{ testRecording ? "录音中…（4 秒）" : testRecognizing ? "识别中…" : "开始录音" }}
         </button>
         <button
           type="button"
@@ -778,6 +782,8 @@ import { notify } from "../../../store/appStore";
 import { asrStore } from "../../../store/asrStore";
 import { alertDialog, confirmDialog } from "../../../store/dialogStore";
 import type { AsrSettings } from "../../../api/asr";
+import { asrRecognizeWav, asrTestProvider } from "../../../api/asr";
+import { pcmToWavPcm16, trimSilencePcm } from "../../../utils/asrAudio";
 import type { AsrModelState, AsrProviderConfig, SiteSettings } from "../../../data/mock";
 
 // ── 兼容层：语音设置改存后端 speech_setting 表，模板一行不改 ──────────────
@@ -894,6 +900,54 @@ const MIC_DEVICES: AsrFieldOption[] = [
   { value: "headset", label: "耳机麦克风" },
   { value: "builtin", label: "内置麦克风" },
 ];
+
+/** 麦克风设备列表：点「刷新设备列表」时用浏览器 enumerateDevices 的真实结果替换。 */
+const micDevices = ref<AsrFieldOption[]>([...MIC_DEVICES]);
+const refreshingDevices = ref(false);
+
+async function refreshMicDevices(): Promise<void> {
+  if (refreshingDevices.value) return;
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    await alertDialog("刷新麦克风设备列表", "当前浏览器不支持设备枚举");
+    return;
+  }
+  refreshingDevices.value = true;
+  try {
+    // 先拿一次权限：没有权限时 enumerateDevices 的 label 全是空串
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((t) => t.stop());
+    const all = await navigator.mediaDevices.enumerateDevices();
+    const inputs = all.filter((d) => d.kind === "audioinput");
+    micDevices.value = [
+      { value: "default", label: "系统默认设备" },
+      ...inputs.map((d, i) => ({ value: d.deviceId, label: d.label || `麦克风 ${i + 1}` })),
+    ];
+    if (!micDevices.value.some((d) => d.value === store.settings.asr_mic_device)) {
+      updateSettings({ asr_mic_device: "default" });
+    }
+    notify(`已刷新麦克风设备（${inputs.length} 个）`);
+  } catch (e) {
+    await alertDialog("刷新麦克风设备列表失败", e instanceof Error ? e.message : String(e));
+  } finally {
+    refreshingDevices.value = false;
+  }
+}
+
+const testingConnection = ref(false);
+
+async function testConnection(): Promise<void> {
+  if (testingConnection.value) return;
+  testingConnection.value = true;
+  try {
+    const result = await asrTestProvider(store.settings.active_provider);
+    updateSettings({ asr_last_result: result.message });
+    notify(`连接成功：${result.providerId} · ${result.latencyMs}ms`);
+  } catch (e) {
+    await alertDialog("测试连接失败", e instanceof Error ? e.message : String(e));
+  } finally {
+    testingConnection.value = false;
+  }
+}
 
 const LANGUAGE_OPTIONS: AsrFieldOption[] = [
   { value: "zh", label: "中文" },
@@ -1336,13 +1390,108 @@ async function deleteModel(asset: ModelAsset): Promise<void> {
 
 // ── 测试区 ──────────────────────────────────────────────────
 
+/** 本地模型下载仍不在当前范围（识别走云端 / HTTP provider），只保留一处明确的占位提示。 */
+function requireBackend(action: string): void {
+  void alertDialog(action, "本地模型下载未接入；当前请使用云端或 HTTP provider");
+}
+
 function clearResult(): void {
   updateSettings({ asr_last_result: "" });
   notify("已清空识别结果");
 }
 
-function requireBackend(action: string): void {
-  void alertDialog(action, "需要后端服务，当前未接入");
+/** 测试区录音状态：点一次录 4 秒，停止后直接走真实识别接口。 */
+const testRecording = ref(false);
+const testRecognizing = ref(false);
+const testPcm: number[] = [];
+let testStream: MediaStream | null = null;
+let testAudioCtx: AudioContext | null = null;
+let testProcessor: ScriptProcessorNode | null = null;
+let testTimer: number | undefined;
+
+function teardownTestAudio(): void {
+  if (testTimer !== undefined) {
+    window.clearTimeout(testTimer);
+    testTimer = undefined;
+  }
+  try {
+    testProcessor?.disconnect();
+  } catch {
+    /* ignore */
+  }
+  testProcessor = null;
+  void testAudioCtx?.close().catch(() => {});
+  testAudioCtx = null;
+  testStream?.getTracks().forEach((t) => t.stop());
+  testStream = null;
+}
+
+async function startTestRecording(): Promise<void> {
+  if (testRecording.value || testRecognizing.value) return;
+  if (!navigator.mediaDevices?.getUserMedia) {
+    await alertDialog("开始录音", "当前浏览器不支持语音输入（缺少 getUserMedia）");
+    return;
+  }
+  if (!navigator.onLine) {
+    await alertDialog("开始录音", "当前已断网，语音输入不可用");
+    return;
+  }
+  try {
+    testPcm.length = 0;
+    testStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        sampleRate: 16000,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+    });
+    testAudioCtx = new AudioContext({ sampleRate: 16000 });
+    const source = testAudioCtx.createMediaStreamSource(testStream);
+    testProcessor = testAudioCtx.createScriptProcessor(1024, 1, 1);
+    source.connect(testProcessor);
+    // 输出接零增益，避免把采集流回放出来
+    const silence = testAudioCtx.createGain();
+    silence.gain.value = 0;
+    testProcessor.connect(silence);
+    silence.connect(testAudioCtx.destination);
+    testProcessor.onaudioprocess = (e) => {
+      if (!testRecording.value) return;
+      testPcm.push(...e.inputBuffer.getChannelData(0));
+    };
+    testRecording.value = true;
+    testTimer = window.setTimeout(() => void stopTestRecording(), 4000);
+  } catch (e) {
+    teardownTestAudio();
+    testRecording.value = false;
+    await alertDialog("开始录音失败", e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function stopTestRecording(): Promise<void> {
+  if (!testRecording.value) return;
+  testRecording.value = false;
+  testRecognizing.value = true;
+  const captured = testPcm.slice();
+  teardownTestAudio();
+  try {
+    const wav = pcmToWavPcm16(trimSilencePcm(captured));
+    if (wav.byteLength <= 44) {
+      await alertDialog("开始录音", "没有采集到有效语音，请靠近麦克风再试");
+      return;
+    }
+    const result = await asrRecognizeWav({
+      providerId: store.settings.active_provider,
+      wavBytes: Array.from(wav),
+      languageHint: null,
+    });
+    updateSettings({ asr_last_result: result.text });
+    notify("识别完成");
+  } catch (e) {
+    await alertDialog("识别失败", e instanceof Error ? e.message : String(e));
+  } finally {
+    testRecognizing.value = false;
+  }
 }
 
 // ── 顶部状态 ────────────────────────────────────────────────
@@ -1523,6 +1672,7 @@ watch(
 
 onBeforeUnmount(() => {
   endPttCapture();
+  teardownTestAudio();
   // 离开设置页立刻落库，不等 500ms debounce：用户常常「改完就切页面 / 关窗口」，
   // 等计时器就可能丢掉最后一次改动。保存失败不抛到用户面前（已经在离开），只记日志。
   void asrStore.flush().catch((e) => console.warn("[ASR] 离开设置页保存失败:", e));
