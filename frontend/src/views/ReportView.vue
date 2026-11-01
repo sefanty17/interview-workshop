@@ -85,6 +85,50 @@
         <p v-if="regenError" class="mt-2 text-center text-xs text-red-400">{{ regenError }}</p>
       </MenuItem>
 
+      <MenuItem v-if="expression" size="large" title="表达分析" icon="◍">
+        <div class="mb-3 flex items-baseline gap-2">
+          <span class="text-2xl font-black leading-none text-[#79d9ff]">{{ expression.overallScore }}</span>
+          <span class="text-xs text-white/50">表达综合分 · 基于 {{ expression.sampleCount }} 次作答</span>
+        </div>
+
+        <div v-for="m in expression.metrics" :key="m.code" class="mb-3 last:mb-0">
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-white/80">{{ m.label }}</span>
+            <span class="text-white/50">
+              {{ m.score === null ? "—" : m.score + " 分" }} · {{ m.value }}
+            </span>
+          </div>
+          <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+            <div class="h-full rounded-full bg-[#79d9ff]" :style="{ width: `${m.score ?? 0}%` }" />
+          </div>
+          <p class="mt-1 text-[11px] leading-relaxed text-white/45">{{ m.comment }}</p>
+        </div>
+
+        <div v-if="expression.topFillers.length" class="mt-3 flex flex-wrap items-center gap-1.5">
+          <span class="text-[11px] text-white/40">高频口头禅</span>
+          <span
+            v-for="f in expression.topFillers"
+            :key="f"
+            class="rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/70"
+          >
+            {{ f }}
+          </span>
+        </div>
+
+        <ul v-if="expression.suggestions.length" class="mt-3 space-y-1.5">
+          <li
+            v-for="(s, i) in expression.suggestions"
+            :key="'e' + i"
+            class="flex gap-2 text-xs leading-relaxed text-white/70"
+          >
+            <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#79d9ff]"></span>
+            <span>{{ s }}</span>
+          </li>
+        </ul>
+
+        <p class="mt-3 text-[11px] leading-relaxed text-white/35">{{ expression.note }}</p>
+      </MenuItem>
+
       <MenuItem v-if="summary || summaryLoading || summaryError" size="large" title="对话总结" icon="✎">
         <div v-if="summaryLoading" class="py-6 text-center text-sm text-white/50">对话总结生成中…</div>
         <div v-else-if="summaryError" class="py-4 text-center text-xs text-red-400">
@@ -226,6 +270,7 @@ import { findInterviewer } from "../data/interviewers";
 import { store } from "../store/appStore";
 import { fetchEvaluation, runEvaluation, type EvaluationResult } from "../api/evaluation";
 import { fetchSummary, runSummary, type DialogueSummary } from "../api/summary";
+import { fetchExpression, type ExpressionReport } from "../api/expression";
 import { fetchSessionDetail } from "../api/chat";
 import type { InterviewRecord } from "../data/mock";
 
@@ -312,8 +357,30 @@ async function loadEvaluation() {
   }
 }
 
+// ── 表达分析（issue #9·文本版）：由后端按台词现算，自由对话/作答不足时接口返回 400 ──
+
+const expression = ref<ExpressionReport | null>(null);
+
+/**
+ * 拉表达分析。
+ *
+ * 后端对「自由对话」「作答不足 2 次」返回 400（不适用，不是故障），
+ * `fetchExpression` 已把这两种折成 null，这里只管静默隐藏板块。
+ */
+async function loadExpression() {
+  const id = sid.value;
+  if (id === null || freeDialogue.value) return;
+  try {
+    expression.value = await fetchExpression(id);
+  } catch (e) {
+    console.warn("[report] 拉取表达分析失败", e);
+  }
+}
+
 onMounted(async () => {
   await loadRemoteRecord();
+  // 表达分析是纯计算，跟着场次详情一起拉，快且无副作用
+  await loadExpression();
   // 总结在结束面试时后台生成，报告页打开时可能还没好：先并行轮询，评估照常走
   void loadSummary();
   await loadEvaluation();
@@ -543,6 +610,17 @@ function exportMarkdown() {
       if (q.suggestion) lines.push(`- 建议：${q.suggestion}`);
       lines.push("");
     });
+  }
+
+  if (expression.value) {
+    const e = expression.value;
+    lines.push("## 表达分析", "", `综合分：${e.overallScore}（基于 ${e.sampleCount} 次作答）`, "");
+    for (const m of e.metrics) {
+      lines.push(`- ${m.label}：${m.score === null ? "—" : m.score} 分（${m.value}）`);
+    }
+    if (e.topFillers.length) lines.push(`- 高频口头禅：${e.topFillers.join("、")}`);
+    for (const s of e.suggestions) lines.push(`- 建议：${s}`);
+    lines.push("");
   }
 
   if (summary.value?.status === "ok") {
