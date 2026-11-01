@@ -42,8 +42,8 @@
 
       <MenuItem size="large" title="逐题复盘" icon="≡">
         <div
-          v-for="(q, i) in record.questions"
-          :key="q.id"
+          v-for="(q, i) in questionReviews"
+          :key="q.key"
           class="mb-3 rounded-lg border border-white/10 bg-white/[0.04] p-3 last:mb-0"
         >
           <div class="flex items-start gap-2">
@@ -55,14 +55,106 @@
           </div>
 
           <div class="mt-2 pl-8">
+            <p
+              v-if="q.quote"
+              class="mb-1.5 border-l-2 border-emerald-400/70 pl-2 text-xs leading-relaxed text-white/60"
+            >
+              你的原话：{{ q.quote }}
+            </p>
             <p class="line-clamp-2 text-xs text-white/60">{{ q.comment }}</p>
-            <p class="mt-1.5 border-l-2 border-[#79d9ff] pl-2 text-xs leading-relaxed text-white/80">
-              建议：{{ q.suggest }}
+            <p v-if="q.suggestion" class="mt-1.5 border-l-2 border-[#79d9ff] pl-2 text-xs leading-relaxed text-white/80">
+              建议：{{ q.suggestion }}
             </p>
           </div>
         </div>
 
-        <p v-if="!record.questions.length" class="py-10 text-center text-sm text-white/40">本场没有逐题记录</p>
+        <p v-if="!questionReviews.length" class="py-6 text-center text-sm text-white/40">本场没有逐题记录</p>
+
+        <div v-if="sid !== null" class="mt-3 flex justify-center">
+          <button class="btn btn-sm" :disabled="regenLoading" @click="regenerate">
+            {{ regenLoading ? "重新评估中…" : "重新生成逐题复盘" }}
+          </button>
+        </div>
+        <p v-if="regenError" class="mt-2 text-center text-xs text-red-400">{{ regenError }}</p>
+      </MenuItem>
+
+      <MenuItem v-if="summary || summaryLoading || summaryError" size="large" title="对话总结" icon="✎">
+        <div v-if="summaryLoading" class="py-6 text-center text-sm text-white/50">对话总结生成中…</div>
+        <div v-else-if="summaryError" class="py-4 text-center text-xs text-red-400">
+          {{ summaryError }}
+          <button v-if="sid !== null" class="ml-2 underline" @click="loadSummary()">重试</button>
+        </div>
+        <div v-else-if="summary?.status === 'failed'" class="py-4 text-center text-xs text-red-400">
+          对话总结生成失败：{{ summary.error || "未知原因" }}
+          <button class="ml-2 underline" :disabled="summaryRegen" @click="regenerateSummary">
+            {{ summaryRegen ? "重新生成中…" : "重新生成" }}
+          </button>
+        </div>
+        <template v-else-if="summary">
+          <p v-if="summary.overview" class="mb-4 text-xs leading-relaxed text-white/60">{{ summary.overview }}</p>
+
+          <div
+            v-for="q in summary.questions"
+            :key="q.index"
+            class="mb-3 rounded-lg border border-white/10 bg-white/[0.04] p-3 last:mb-0"
+          >
+            <div class="flex items-start gap-2">
+              <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#79d9ff]/15 text-[11px] font-bold text-[#79d9ff]">
+                {{ q.index }}
+              </span>
+              <div class="min-w-0 flex-1 text-sm leading-relaxed text-white">{{ q.question }}</div>
+              <span class="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/60">
+                深度 {{ q.depth }}
+              </span>
+            </div>
+            <div class="mt-2 space-y-1 pl-8">
+              <p v-for="(p, i) in q.points" :key="'p' + i" class="text-xs leading-relaxed text-emerald-300/80">
+                · {{ p }}
+              </p>
+              <p v-for="(b, i) in q.blockers" :key="'b' + i" class="text-xs leading-relaxed text-red-300/80">
+                ! {{ b }}
+              </p>
+            </div>
+          </div>
+
+          <div v-if="summary.coverage.covered.length || summary.coverage.missing.length" class="mt-4 space-y-2">
+            <div v-if="summary.coverage.covered.length" class="flex flex-wrap items-center gap-1.5">
+              <span class="text-[11px] text-white/40">已覆盖</span>
+              <span
+                v-for="item in summary.coverage.covered"
+                :key="'c-' + item"
+                class="rounded-full bg-emerald-400/15 px-2 py-0.5 text-[11px] text-emerald-300"
+              >
+                {{ item }}
+              </span>
+            </div>
+            <div v-if="summary.coverage.missing.length" class="flex flex-wrap items-center gap-1.5">
+              <span class="text-[11px] text-white/40">未覆盖</span>
+              <span
+                v-for="item in summary.coverage.missing"
+                :key="'m-' + item"
+                class="rounded-full bg-red-400/15 px-2 py-0.5 text-[11px] text-red-300"
+              >
+                {{ item }}
+              </span>
+            </div>
+          </div>
+
+          <div v-if="summary.vocabulary.good.length || summary.vocabulary.improve.length" class="mt-3 space-y-1">
+            <p v-if="summary.vocabulary.good.length" class="text-xs leading-relaxed text-white/60">
+              用词准确：{{ summary.vocabulary.good.join("、") }}
+            </p>
+            <p v-if="summary.vocabulary.improve.length" class="text-xs leading-relaxed text-white/60">
+              可以更好：{{ summary.vocabulary.improve.join("；") }}
+            </p>
+          </div>
+
+          <div class="mt-3 flex justify-center">
+            <button class="btn btn-sm" :disabled="summaryRegen" @click="regenerateSummary">
+              {{ summaryRegen ? "重新生成中…" : "重新生成总结" }}
+            </button>
+          </div>
+        </template>
       </MenuItem>
 
       <MenuItem v-if="highlights.length" size="small" title="亮点" icon="✓">
@@ -100,7 +192,10 @@
       </MenuItem>
 
       <MenuItem size="large" title="导出报告" icon="⎙">
-        <button class="btn-big" @click="printPage">打印 / 导出 PDF</button>
+        <div class="flex flex-col gap-3">
+          <button class="btn-big" @click="printPage">打印 / 导出 PDF</button>
+          <button class="btn-big" @click="exportMarkdown">导出 Markdown</button>
+        </div>
       </MenuItem>
     </template>
 
@@ -114,7 +209,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import PageShell from "../components/ui/PageShell.vue";
 import MenuItem from "../components/settings/MenuItem.vue";
@@ -123,6 +218,7 @@ import { jobs } from "../data/mock";
 import { findInterviewer } from "../data/interviewers";
 import { store } from "../store/appStore";
 import { fetchEvaluation, runEvaluation, type EvaluationResult } from "../api/evaluation";
+import { fetchSummary, runSummary, type DialogueSummary } from "../api/summary";
 import { fetchSessionDetail } from "../api/chat";
 import type { InterviewRecord } from "../data/mock";
 
@@ -179,6 +275,8 @@ async function loadRemoteRecord() {
 const evaluation = ref<EvaluationResult | null>(null);
 const evalLoading = ref(false);
 const evalError = ref("");
+const regenLoading = ref(false);
+const regenError = ref("");
 
 /**
  * 拉评估：有就直接显示，404（还没评估过）就自动跑一次。
@@ -203,15 +301,116 @@ async function loadEvaluation() {
 
 onMounted(async () => {
   await loadRemoteRecord();
+  // 总结在结束面试时后台生成，报告页打开时可能还没好：先并行轮询，评估照常走
+  void loadSummary();
   await loadEvaluation();
+});
+
+// ── 对话总结（issue #4）：结束面试后由后端后台生成，这里轮询取结果 ──
+
+const SUMMARY_POLL_INTERVAL = 3000;
+/** 约 24 秒：正常一场 5~10 轮的总结在 30 秒内能出来；超过就当作没生成，允许手动触发 */
+const SUMMARY_MAX_POLLS = 8;
+
+const summary = ref<DialogueSummary | null>(null);
+const summaryLoading = ref(false);
+const summaryError = ref("");
+const summaryRegen = ref(false);
+let summaryPollTimer: number | undefined;
+
+/**
+ * 拉取（或轮询）总结。
+ *
+ * 404 表示后台还在生成 —— 每 3 秒重试一次，最多 8 次；
+ * 仍没有就结束轮询、不显示该板块（用户可在其它入口重试）。
+ * 生成失败（status=failed）是 200 响应，直接展示失败原因。
+ */
+async function loadSummary(attempt = 0) {
+  const id = sid.value;
+  if (id === null || skipEval.value) return;
+  if (summaryPollTimer) {
+    window.clearTimeout(summaryPollTimer);
+    summaryPollTimer = undefined;
+  }
+  summaryLoading.value = true;
+  summaryError.value = "";
+  try {
+    const existing = await fetchSummary(id);
+    summary.value = existing;
+    if (existing) return;
+    if (attempt < SUMMARY_MAX_POLLS) {
+      summaryPollTimer = window.setTimeout(() => void loadSummary(attempt + 1), SUMMARY_POLL_INTERVAL);
+      return;
+    }
+  } catch (e) {
+    console.warn("[report] 拉取对话总结失败", e);
+    summaryError.value = e instanceof Error ? e.message : "对话总结加载失败";
+  } finally {
+    // 调度了下一轮时保持「生成中」不变；拿到结果 / 出错 / 轮询结束才收尾
+    if (summary.value || summaryError.value || attempt >= SUMMARY_MAX_POLLS) {
+      summaryLoading.value = false;
+    }
+  }
+}
+
+/** 手动重新生成（失败重试 / 轮询没等到时补一刀）。非剧本场次后端会返回 400。 */
+async function regenerateSummary() {
+  const id = sid.value;
+  if (id === null || summaryRegen.value) return;
+  summaryRegen.value = true;
+  summaryError.value = "";
+  summaryLoading.value = true;
+  try {
+    summary.value = await runSummary(id);
+  } catch (e) {
+    summaryError.value = e instanceof Error ? e.message : "对话总结生成失败";
+  } finally {
+    summaryRegen.value = false;
+    summaryLoading.value = false;
+  }
+}
+
+onBeforeUnmount(() => {
+  if (summaryPollTimer) window.clearTimeout(summaryPollTimer);
 });
 
 // ── 以下是「评估优先、本地兜底」：有评估用评估，没有完全退回读 store.records 的旧行为 ──
 
 const score = computed(() => evaluation.value?.overallScore ?? record.value?.score ?? 0);
-/** 本地存档有逐题明细；后端场次按详情里的玩家发言数还原题数 */
+/** 逐题复盘优先用 AI 评估结果（含原话摘录），其次退回本地存档 */
+interface QuestionRow {
+  key: string;
+  question: string;
+  quote: string;
+  score: number;
+  comment: string;
+  suggestion: string;
+}
+const questionReviews = computed<QuestionRow[]>(() => {
+  const fromEval = evaluation.value?.questions ?? [];
+  if (fromEval.length) {
+    return fromEval.map((q) => ({
+      key: `q-${q.index}`,
+      question: q.question,
+      quote: q.quote ?? "",
+      score: q.score,
+      comment: q.comment ?? "",
+      suggestion: q.suggestion ?? "",
+    }));
+  }
+  return (record.value?.questions ?? []).map((q) => ({
+    key: String(q.id),
+    question: q.question,
+    quote: "",
+    score: q.score,
+    comment: q.comment,
+    suggestion: q.suggest,
+  }));
+});
+
+/** 题数：AI 逐题复盘 > 本地明细 > 详情里的玩家发言数 */
 const questionCount = computed(
-  () => (record.value?.questions.length ?? 0) || remoteQuestionCount.value,
+  () => questionReviews.value.length || record.value?.questions.length || remoteQuestionCount.value,
 );
 
 const radarLabels = computed(() => {
@@ -225,13 +424,13 @@ const radarValues = computed(() => {
   return record.value?.dimensions.map((d) => d.score) ?? [];
 });
 
-/** 统一成 {name, score} 再排序，本地维度与评估维度的字段名差异在这里抹平 */
+/** 统一成 {name, score, comment} 再排序，本地维度与评估维度的字段名差异在这里抹平 */
 const dimsAsc = computed(() => {
   const ev = evaluation.value;
   const list =
     ev && ev.dimensions.length
-      ? ev.dimensions.map((d) => ({ name: d.label, score: d.score }))
-      : (record.value?.dimensions ?? []);
+      ? ev.dimensions.map((d) => ({ name: d.label, score: d.score, comment: d.comment ?? "" }))
+      : (record.value?.dimensions ?? []).map((d) => ({ name: d.name, score: d.score, comment: "" }));
   return [...list].sort((a, b) => a.score - b.score);
 });
 const dimsDesc = computed(() => [...dimsAsc.value].reverse());
@@ -282,6 +481,92 @@ const plans = computed(() => {
     practice: (weak.length ? weak[i % weak.length]?.suggest : "") || FALLBACK_PRACTICE,
   }));
 });
+
+/**
+ * 重新跑一次评估以补齐逐题复盘。
+ * 旧版评估没有 questions 字段，只能整份重算——评估接口是覆盖式的，不会产生第二份。
+ */
+async function regenerate() {
+  const id = sid.value;
+  if (id === null || regenLoading.value) return;
+  regenLoading.value = true;
+  regenError.value = "";
+  try {
+    evaluation.value = await runEvaluation(id);
+    evalError.value = "";
+  } catch (e) {
+    regenError.value = e instanceof Error ? e.message : "重新评估失败";
+  } finally {
+    regenLoading.value = false;
+  }
+}
+
+/** 导出 Markdown：答辩时能当场给出一份可读的报告文件，不依赖打印对话框。 */
+function exportMarkdown() {
+  const lines: string[] = [];
+  lines.push(`# 面试报告`, "");
+  lines.push(`- 岗位：${record.value?.jobName ?? "-"}`);
+  lines.push(`- 面试官：${record.value?.personaName ?? "-"}`);
+  lines.push(`- 总分：${score.value}`);
+  lines.push(`- 题数：${questionCount.value}`);
+  if (evaluation.value?.summary) lines.push(`- 总评：${evaluation.value.summary}`);
+  lines.push("");
+
+  if (dimsDesc.value.length) {
+    lines.push("## 维度评分", "");
+    lines.push("| 维度 | 分数 | 评语 |", "| --- | --- | --- |");
+    for (const d of dimsDesc.value) {
+      lines.push(`| ${d.name} | ${d.score} | ${d.comment ?? ""} |`);
+    }
+    lines.push("");
+  }
+
+  if (questionReviews.value.length) {
+    lines.push("## 逐题复盘", "");
+    questionReviews.value.forEach((q, i) => {
+      lines.push(`### ${i + 1}. ${q.question}（${q.score} 分）`);
+      if (q.quote) lines.push(`> 你的原话：${q.quote}`);
+      if (q.comment) lines.push(`- 点评：${q.comment}`);
+      if (q.suggestion) lines.push(`- 建议：${q.suggestion}`);
+      lines.push("");
+    });
+  }
+
+  if (summary.value?.status === "ok") {
+    const s = summary.value;
+    lines.push("## 对话总结", "");
+    if (s.overview) lines.push(`> ${s.overview}`, "");
+    s.questions.forEach((q) => {
+      lines.push(`### ${q.index}. ${q.question}（深度 ${q.depth}）`);
+      q.points.forEach((p) => lines.push(`- 论点：${p}`));
+      q.blockers.forEach((b) => lines.push(`- 卡壳：${b}`));
+      lines.push("");
+    });
+    if (s.coverage.covered.length) lines.push(`- 已覆盖：${s.coverage.covered.join("、")}`);
+    if (s.coverage.missing.length) lines.push(`- 未覆盖：${s.coverage.missing.join("、")}`);
+    if (s.vocabulary.good.length) lines.push(`- 用词准确：${s.vocabulary.good.join("、")}`);
+    if (s.vocabulary.improve.length) lines.push(`- 可以更好：${s.vocabulary.improve.join("；")}`);
+    lines.push("");
+  }
+
+  if (highlights.value.length) {
+    lines.push("## 亮点", "", ...highlights.value.map((h) => `- ${h}`), "");
+  }
+  if (weaknesses.value.length) {
+    lines.push("## 不足", "", ...weaknesses.value.map((w) => `- ${w}`), "");
+  }
+  if (plans.value.length) {
+    lines.push("## 改进建议", "", ...plans.value.map((p) => `- ${p.advice}`), "");
+  }
+
+  const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `面试报告-${route.params.id}.md`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 function printPage() {
   window.print();

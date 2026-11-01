@@ -15,6 +15,7 @@ import cn.edu.zjut.interview.repository.InterviewEvaluationRepository;
 import cn.edu.zjut.interview.repository.InterviewMessageRepository;
 import cn.edu.zjut.interview.repository.InterviewSessionRepository;
 import cn.edu.zjut.interview.service.ChatService;
+import cn.edu.zjut.interview.summary.SummaryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -57,6 +58,7 @@ public class SessionController {
     private final InterviewMessageRepository messageRepository;
     private final InterviewEvaluationRepository evaluationRepository;
     private final InterviewEvaluationDimensionRepository dimensionRepository;
+    private final SummaryService summaryService;
 
     public SessionController(ChatService chatService,
                              InterviewEngine engine,
@@ -64,7 +66,8 @@ public class SessionController {
                              InterviewSessionRepository sessionRepository,
                              InterviewMessageRepository messageRepository,
                              InterviewEvaluationRepository evaluationRepository,
-                             InterviewEvaluationDimensionRepository dimensionRepository) {
+                             InterviewEvaluationDimensionRepository dimensionRepository,
+                             SummaryService summaryService) {
         this.chatService = chatService;
         this.engine = engine;
         this.engineExecutor = engineExecutor;
@@ -72,6 +75,7 @@ public class SessionController {
         this.messageRepository = messageRepository;
         this.evaluationRepository = evaluationRepository;
         this.dimensionRepository = dimensionRepository;
+        this.summaryService = summaryService;
     }
 
     @PostMapping
@@ -101,6 +105,7 @@ public class SessionController {
         }
         dimensionRepository.deleteBySessionId(id);
         evaluationRepository.deleteBySessionId(id);
+        summaryService.deleteBySessionId(id);
         List<InterviewMessage> messages = messageRepository.findBySessionIdOrderBySeqAsc(id);
         if (!messages.isEmpty()) {
             messageRepository.deleteAll(messages);
@@ -169,6 +174,11 @@ public class SessionController {
 
     @PostMapping("/{id}/finish")
     public SessionFinishView finish(@PathVariable Long id) {
-        return engine.finishNow(id);
+        SessionFinishView view = engine.finishNow(id);
+        // issue #4：剧本场次结束后在后台生成一次对话总结。异步触发是刻意的——
+        // 总结要调大模型（十几秒甚至更久），结束面试不能等它；失败也只落一行 failed，
+        // 由报告页显示「摘要生成失败」，绝不回滚已经结束的场次。
+        summaryService.generateAsync(id);
+        return view;
     }
 }
