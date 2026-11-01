@@ -161,12 +161,15 @@ export async function start(source: AsrSource) {
         languageHint: null,
       });
     }
+    const selectedMic = runtime.asrStore?.settings?.asr_mic_device;
     runtime.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         sampleRate: 16000,
         channelCount: 1,
         echoCancellation: true,
         noiseSuppression: true,
+        // 设置页选中的真实设备 ID；"default" 交给浏览器自己选系统默认
+        ...(selectedMic && selectedMic !== "default" ? { deviceId: selectedMic } : {}),
       },
     });
     // 竞态防护：await 挂起期间会话可能已被 stop()/discardRecording() 结束

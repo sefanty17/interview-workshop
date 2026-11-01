@@ -481,7 +481,7 @@
               type="button"
               title="刷新模型列表"
               class="inline-flex h-9 w-11 shrink-0 items-center justify-center rounded-md border border-white/15 bg-white/5 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
-              @click="refreshModels"
+              @click="refreshModels()"
             >
               ↻
             </button>
@@ -577,7 +577,7 @@
           type="button"
           role="switch"
           :aria-checked="store.settings.stream_enabled"
-          :disabled="!providerSupportsStreaming"
+          :disabled="true"
           aria-label="流式识别"
           class="flex cursor-pointer items-start gap-3 border-none bg-transparent p-0 text-left disabled:cursor-not-allowed disabled:opacity-45"
           @click="setBooleanSetting('stream_enabled', !store.settings.stream_enabled)"
@@ -594,94 +594,24 @@
           <span class="min-w-0">
             <span class="block text-sm font-medium text-white">流式识别</span>
             <span class="mt-0.5 block text-sm text-gray-300">
-              {{
-                !providerSupportsStreaming
-                  ? "当前模型不支持流式识别"
-                  : store.settings.active_provider === "llama-asr"
-                    ? "录音结束后上传本地识别，结果逐步显示（llama-server 结果流式）"
-                    : "说话过程中实时显示识别文字"
-              }}
+              流式识别后端尚未接入，当前统一使用整句识别
             </span>
           </span>
         </button>
       </div>
     </MenuItem>
 
-    <!-- ===== 模型下载与管理 ===== -->
-    <MenuItem title="模型下载与管理" size="large">
+    <!-- ===== 本地模型 ===== -->
+    <MenuItem title="本地模型" size="large">
       <template #header>
         <FileDown :size="20" class="text-cyan-300" />
       </template>
 
-      <div class="mb-3 flex items-center justify-between gap-3">
-        <p class="text-xs text-white/45">下载、切换并清理本地识别引擎所需的模型文件</p>
-        <FileDown :size="18" class="text-white/40" />
+      <div class="rounded-lg border border-white/10 bg-black/15 p-4 text-xs leading-6 text-white/60">
+        <p>本地模型由 llama-server 启动时自行加载，本页不提供下载 / 删除。</p>
+        <p>云端 API（qwen-asr）与模拟识别（mock-asr）都不需要本地模型文件。</p>
+        <p>如需本地识别，请先启动 llama-server，再在「识别服务」里选择它。</p>
       </div>
-
-      <ul class="flex flex-col gap-3">
-        <li
-          v-for="asset in MODEL_CATALOG"
-          :key="asset.id"
-          class="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/5 p-4"
-        >
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0">
-              <p class="font-medium text-white">{{ asset.name }}</p>
-              <p class="text-xs text-white/40">
-                {{ asset.engine }} · {{ asset.size }} · {{ asset.language }}
-              </p>
-              <span
-                class="mt-1 inline-block rounded border border-cyan-300/25 bg-cyan-600/10 px-1 py-px text-[10px] text-cyan-50/75"
-              >
-                {{ modelState(asset.id).installed ? "已安装" : "未下载" }}
-              </span>
-              <span
-                v-if="asset.model === activeModelId && asset.provider === store.settings.active_provider"
-                class="mt-1 ml-1 inline-block rounded border border-emerald-300/25 bg-emerald-500/10 px-1 py-px text-[10px] text-emerald-200"
-              >
-                使用中
-              </span>
-            </div>
-            <div class="flex shrink-0 gap-2">
-              <button
-                v-if="!modelState(asset.id).installed"
-                type="button"
-                class="inline-flex min-h-9 items-center justify-center gap-1.75 rounded-md border border-white/15 bg-white/5 px-3 py-2 text-[13px] text-white/80 transition-colors duration-200 hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-50"
-                @click="requireBackend('下载模型')"
-              >
-                <FileDown :size="16" />
-                <span>下载</span>
-              </button>
-              <button
-                v-else
-                type="button"
-                class="inline-flex min-h-9 items-center justify-center rounded-md border border-cyan-300/25 bg-cyan-300/10 px-3 py-2 text-[13px] text-cyan-100 transition-colors duration-200 hover:bg-cyan-300/20"
-                @click="switchModel(asset)"
-              >
-                切换
-              </button>
-              <button
-                type="button"
-                class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-red-300/20 bg-red-400/10 text-red-200 transition-colors hover:bg-red-400/20 disabled:opacity-40"
-                title="删除模型"
-                :disabled="!modelState(asset.id).installed"
-                @click="deleteModel(asset)"
-              >
-                <Trash2 :size="16" />
-              </button>
-            </div>
-          </div>
-          <div
-            v-if="modelState(asset.id).progress > 0 && modelState(asset.id).progress < 100"
-            class="h-1.5 w-full overflow-hidden rounded-full bg-white/10"
-          >
-            <div
-              class="h-full rounded-full bg-cyan-400 transition-all duration-300"
-              :style="{ width: modelState(asset.id).progress + '%' }"
-            ></div>
-          </div>
-        </li>
-      </ul>
     </MenuItem>
 
     <!-- ===== 测试区 ===== -->
@@ -775,14 +705,13 @@ import {
   RefreshCw,
   Send,
   SlidersHorizontal,
-  Trash2,
 } from "@lucide/vue";
 import { MenuItem, MenuPage } from "../../ui";
 import { notify } from "../../../store/appStore";
 import { asrStore } from "../../../store/asrStore";
 import { alertDialog, confirmDialog } from "../../../store/dialogStore";
-import type { AsrSettings } from "../../../api/asr";
-import { asrRecognizeWav, asrTestProvider } from "../../../api/asr";
+import type { AsrSettings, AsrStatus } from "../../../api/asr";
+import { asrGetStatus, asrRecognizeWav, asrTestProvider, asrListModels } from "../../../api/asr";
 import { pcmToWavPcm16, trimSilencePcm } from "../../../utils/asrAudio";
 import type { AsrModelState, AsrProviderConfig, SiteSettings } from "../../../data/mock";
 
@@ -878,16 +807,6 @@ interface AsrProvider {
   models: AsrModel[];
 }
 
-interface ModelAsset {
-  id: string;
-  name: string;
-  engine: string;
-  size: string;
-  language: string;
-  /** 切换模型时写入的 provider / model */
-  provider: string;
-  model: string;
-}
 
 const SEND_MODE_OPTIONS: { value: SendMode; label: string }[] = [
   { value: "fill_only", label: "填入输入框（推荐）" },
@@ -1070,27 +989,6 @@ const ASR_PROVIDERS: AsrProvider[] = [
   },
 ];
 
-const MODEL_CATALOG: ModelAsset[] = [
-  {
-    id: "ggml-base",
-    name: "Whisper Base（ggml-base.bin）",
-    engine: "llama-asr / whisper.cpp",
-    size: "142 MB",
-    language: "多语言",
-    provider: "llama-asr",
-    model: "whisper-base",
-  },
-  {
-    id: "ggml-small",
-    name: "Whisper Small（ggml-small.bin）",
-    engine: "llama-asr / whisper.cpp",
-    size: "466 MB",
-    language: "多语言",
-    provider: "llama-asr",
-    model: "whisper-small",
-  },
-];
-
 // ── 服务商 / 配置读写 ──────────────────────────────────────────
 
 const activeProviderInfo = computed<AsrProvider | undefined>(
@@ -1102,7 +1000,15 @@ function picksModelInForm(p: AsrProvider | undefined): boolean {
   return p?.config_fields.some((f) => f.key === "model") ?? false;
 }
 
-const activeModels = computed<AsrModel[]>(() => activeProviderInfo.value?.models ?? []);
+/** 后端 /models 的真实清单；为空时退回静态兜底（本地服务未起 / mock 无模型概念） */
+const dynamicModels = ref<AsrModel[]>([]);
+
+const activeModels = computed<AsrModel[]>(() => {
+  // 后端 /models 返回的清单优先；后端没返回（mock / 本地服务未起）时退回静态兜底
+  return dynamicModels.value.length > 0
+    ? dynamicModels.value
+    : (activeProviderInfo.value?.models ?? []);
+});
 
 const providerCfg = computed<AsrProviderConfig>(
   () => store.settings.provider_configs[store.settings.active_provider] ?? {},
@@ -1263,48 +1169,25 @@ function onServiceChange(event: Event): void {
   if (mid) writeProviderConfig(pid, "model", mid);
 }
 
-function refreshModels(): void {
-  notify(`已刷新 ${activeProviderInfo.value?.display_name ?? "识别服务"} 的模型列表（${activeModels.value.length} 个）`);
-}
-
-// ── 模型下载与管理 ──────────────────────────────────────────
-
-function modelState(id: string): AsrModelState {
-  return store.settings.asr_model_states[id] ?? { installed: false, progress: 0 };
-}
-
-function setModelState(id: string, patch: Partial<AsrModelState>): void {
-  updateSettings({
-    asr_model_states: {
-      ...store.settings.asr_model_states,
-      [id]: { ...modelState(id), ...patch },
-    },
-  });
-}
-
-function switchModel(asset: ModelAsset): void {
-  if (!modelState(asset.id).installed) {
-    void alertDialog("切换模型", "该模型尚未下载，请先下载后再切换。");
-    return;
-  }
-  updateSettings({ active_provider: asset.provider });
-  writeProviderConfig(asset.provider, "model", asset.model);
-  notify(`已切换到 ${asset.name}`);
-}
-
-async function deleteModel(asset: ModelAsset): Promise<void> {
-  const ok = await confirmDialog("删除模型", `确定要删除「${asset.name}」吗？删除后需要重新下载才能使用。`);
-  if (!ok) return;
-  setModelState(asset.id, { installed: false, progress: 0 });
-  notify(`已删除 ${asset.name}`);
+function refreshModels(showToast = true): void {
+  void asrListModels(store.settings.active_provider, String(cfgValue("region") ?? ""))
+    .then((list) => {
+      dynamicModels.value = list as unknown as AsrModel[];
+      if (!showToast) return;
+      if (list.length === 0) {
+        notify(`${activeProviderInfo.value?.display_name ?? "识别服务"} 后端未返回模型清单`);
+      } else {
+        notify(`已刷新 ${activeProviderInfo.value?.display_name ?? "识别服务"} 的模型列表（${list.length} 个）`);
+      }
+    })
+    .catch((e) => {
+      if (showToast) {
+        void alertDialog("刷新模型列表失败", e instanceof Error ? e.message : String(e));
+      }
+    });
 }
 
 // ── 测试区 ──────────────────────────────────────────────────
-
-/** 本地模型下载仍不在当前范围（识别走云端 / HTTP provider），只保留一处明确的占位提示。 */
-function requireBackend(action: string): void {
-  void alertDialog(action, "本地模型下载未接入；当前请使用云端或 HTTP provider");
-}
 
 function clearResult(): void {
   updateSettings({ asr_last_result: "" });
@@ -1349,12 +1232,14 @@ async function startTestRecording(): Promise<void> {
   }
   try {
     testPcm.length = 0;
+    const selectedMic = store.settings.asr_mic_device;
     testStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         sampleRate: 16000,
         channelCount: 1,
         echoCancellation: true,
         noiseSuppression: true,
+        ...(selectedMic && selectedMic !== "default" ? { deviceId: selectedMic } : {}),
       },
     });
     testAudioCtx = new AudioContext({ sampleRate: 16000 });
@@ -1426,7 +1311,16 @@ const statusClass = computed(() =>
   !store.settings.voice_input_enabled ? "text-gray-300" : missingCredential.value ? "text-red-400" : "text-green-400",
 );
 
-const vadLoaded = computed(() => modelState("silero-vad").installed);
+const backendStatus = ref<AsrStatus | null>(null);
+const vadLoaded = computed(() => backendStatus.value?.vad_loaded ?? false);
+
+async function refreshStatus(): Promise<void> {
+  try {
+    backendStatus.value = await asrGetStatus();
+  } catch {
+    backendStatus.value = null;
+  }
+}
 
 // ── 麦克风：自动发送与「识别完成后」是同一项 ────────────────────
 
@@ -1569,6 +1463,8 @@ onMounted(() => {
         updateSettings({ active_provider: ASR_PROVIDERS[0].id });
       }
       ensureProviderConfig();
+      refreshModels(false);
+      void refreshStatus();
     })
     .catch((e) => console.warn("[ASR] 拉取语音设置失败:", e));
 });
@@ -1579,12 +1475,18 @@ watch(
   () => {
     ensureProviderConfig();
     applyRegionEndpoints();
+    dynamicModels.value = [];
+    refreshModels(false);
   },
 );
 
 watch(
   () => String(cfgValue("region") ?? ""),
-  () => applyRegionEndpoints(),
+  () => {
+    applyRegionEndpoints();
+    dynamicModels.value = [];
+    refreshModels(false);
+  },
 );
 
 onBeforeUnmount(() => {

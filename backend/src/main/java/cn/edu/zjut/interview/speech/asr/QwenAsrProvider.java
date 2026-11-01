@@ -1,22 +1,51 @@
 package cn.edu.zjut.interview.speech.asr;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Qwen ASR（阿里云百炼 / DashScope），对应上游 {@code providers/qwen.rs}。
  *
- * <p><b>V1 只有壳</b>：元信息与模型表是真的（设置页要能选它、看到地域与模型），
- * 但 {@link #recognize} 一律抛「缺少凭据」。这不是偷懒——真实的 DashScope 调用
- * 需要请求体格式、热词门控、两种 audio content 格式分流，属于 V4，硬塞一个
- * 半成品实现只会让前端拿到看不懂的失败。
+ * <p>走 OpenAI 兼容的 {@code /compatible-mode/v1/chat/completions}：音频以
+ * {@code data:audio/wav;base64,...} 放进 {@code input_audio.data}，结果在
+ * {@code choices[0].message.content}。
+ *
+ * <p>设置页里 qwen 的默认端点是 DashScope 原生地址（{@code /api/v1/services/aigc/...}），
+ * 这里统一归一到同一 host 的 compatible-mode 地址；用户填业务空间专属域名也能兼容。
  */
 @Component
 public class QwenAsrProvider implements AsrProvider {
 
     public static final String ID = "qwen-asr";
     public static final String DISPLAY = "Qwen ASR（阿里云百炼）";
+
+    private static final int TIMEOUT_SECONDS = 60;
+    private static final String DEFAULT_MODEL = "qwen3-asr-flash";
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final HttpClient HTTP = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
+
+    private final AsrSettingsService settingsService;
+
+    public QwenAsrProvider(@Lazy AsrSettingsService settingsService) {
+        this.settingsService = settingsService;
+    }
 
     @Override
     public String id() {
@@ -48,24 +77,115 @@ public class QwenAsrProvider implements AsrProvider {
                         DashScopeRegion.ALL.stream()
                                 .map(r -> new AsrConfigFieldOption(r.id(), r.label()))
                                 .toList()),
-                // 不是 api_key 而是按地域分开存的 api_keys：北京与新加坡的 Key 互相独立，
-                // 切换地域不能把另一个地域已填的 Key 冲掉
                 AsrConfigField.passwordMap("api_keys", "DashScope API Key", "sk-...",
                         "阿里云百炼（Model Studio）平台 Key，须与所选地域一致。"
                                 + "每个地域单独保存：切换上方地域后，这里显示的是该地域自己的 Key"),
                 AsrConfigField.text("endpoint", "非实时端点", "留空使用所选地域的默认地址",
-                        "multimodal-generation 端点。填业务空间专属域名可覆盖，形如 "
-                                + "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/"
-                                + "multimodal-generation/generation"),
+                        "留空即可；填业务空间专属域名会归一到相同 host 的 compatible-mode 地址"),
                 AsrConfigField.text("ws_endpoint", "实时（流式）端点", "留空使用所选地域的默认地址",
-                        "WebSocket 端点，仅流式模型使用。形如 "
-                                + "wss://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/inference"));
+                        "WebSocket 端点，仅流式模型使用（当前整句识别不走这里）"));
     }
 
     @Override
     public AsrResult recognize(byte[] wav, AsrOptions options) {
-        // V4 接 DashScope multimodal-generation；本批只保证端点与错误码正确
-        throw AsrException.missingCredentials("尚未配置阿里云百炼 API Key");
+        AsrProviderConfig cfg = settingsService.load().getProviderConfigs().get(ID);
+        if (cfg == null || blank(cfg.effectiveApiKey())) {
+            throw AsrException.missingCredentials("尚未配置阿里云百炼 API Key");
+        }
+        String model = blank(cfg.getModel()) ? DEFAULT_MODEL : cfg.getModel().trim();
+        if (model.contains("realtime")) {
+            throw new AsrException(AsrErrorKind.PROVIDER_FAILED, HttpStatus.BAD_REQUEST,
+                    "实时模型需要 WebSocket 流式端点（当前整句识别未接流式）；请改选 qwen3-asr-flash");
+        }
+        String apiKey = cfg.effectiveApiKey().trim();
+        String body = requestBody(model, wav, options == null ? null : options.languageHint());
+        URI uri = URI.create(completionsUrl(cfg));
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(uri)
+                .timeout(Duration.ofSeconds(TIMEOUT_SECONDS))
+                .header("Content-Type", "application/json; charset=utf-8")
+                .header("Authorization", "Bearer " + apiKey)
+                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                .build();
+
+        HttpResponse<String> response;
+        try {
+            response = HTTP.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new AsrException(AsrErrorKind.PROVIDER_FAILED, HttpStatus.BAD_GATEWAY,
+                    "连不上 DashScope（" + uri.getHost() + "）：" + e.getMessage(), e);
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new AsrException(AsrErrorKind.PROVIDER_FAILED, HttpStatus.BAD_GATEWAY,
+                    "DashScope 返回 HTTP " + response.statusCode() + "：" + shortText(response.body()));
+        }
+        return parseResult(response.body());
+    }
+
+    /**
+     * 把配置里的端点归一到 OpenAI 兼容的 chat/completions。
+     *
+     * <p>设置页默认填的是 DashScope 原生 {@code /api/v1/services/aigc/...}；
+     * 这里只保留 scheme + host，再拼 compatible-mode 路径。留空时按地域回退。
+     */
+    static String completionsUrl(AsrProviderConfig cfg) {
+        String endpoint = cfg == null ? "" : cfg.getEndpoint();
+        String origin = origin(endpoint);
+        if (blank(origin)) {
+            DashScopeRegion region = DashScopeRegion.parse(cfg == null ? null : cfg.getRegion());
+            origin = "https://" + region.host();
+        }
+        String base = origin.endsWith("/") ? origin.substring(0, origin.length() - 1) : origin;
+        return base + "/compatible-mode/v1/chat/completions";
+    }
+
+    static String requestBody(String model, byte[] wav, String language) {
+        String dataUri = "data:audio/wav;base64,"
+                + Base64.getEncoder().encodeToString(wav == null ? new byte[0] : wav);
+        Map<String, Object> asrOptions = new LinkedHashMap<>();
+        if (!blank(language)) {
+            asrOptions.put("language", language);
+        }
+        asrOptions.put("enable_itn", true);
+
+        Map<String, Object> content = Map.of(
+                "type", "input_audio",
+                "input_audio", Map.of("data", dataUri));
+        Map<String, Object> message = Map.of(
+                "role", "user",
+                "content", List.of(content));
+        Map<String, Object> root = Map.of(
+                "model", model,
+                "messages", List.of(message),
+                "stream", false,
+                "asr_options", asrOptions);
+        try {
+            return JSON.writeValueAsString(root);
+        } catch (Exception e) {
+            throw new AsrException(AsrErrorKind.PROVIDER_FAILED, HttpStatus.INTERNAL_SERVER_ERROR,
+                    "构造 DashScope 请求失败：" + e.getMessage(), e);
+        }
+    }
+
+    static AsrResult parseResult(String body) {
+        try {
+            JsonNode root = JSON.readTree(body);
+            String text = root.path("choices").path(0).path("message").path("content").asText("");
+            if (text.isBlank()) {
+                throw new AsrException(AsrErrorKind.PROVIDER_FAILED, HttpStatus.BAD_GATEWAY,
+                        "DashScope 返回里没有识别文本：" + shortText(body));
+            }
+            return new AsrResult(text, null, null, ID);
+        } catch (AsrException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AsrException(AsrErrorKind.PROVIDER_FAILED, HttpStatus.BAD_GATEWAY,
+                    "DashScope 返回不是合法 JSON：" + shortText(body), e);
+        }
     }
 
     @Override
@@ -77,5 +197,31 @@ public class QwenAsrProvider implements AsrProvider {
     public List<AsrModelInfo> models(String region) {
         // 地域为空的语义与别处一致：空 = 默认地域（与 AsrProviderConfig.effectiveApiKey 同一条规则）
         return QwenModelCatalog.models(DashScopeRegion.parse(region));
+    }
+
+    /** 取 scheme + host + port；解析失败 / 留空返回空串，由调用方按地域回退。 */
+    private static String origin(String endpoint) {
+        if (blank(endpoint)) {
+            return "";
+        }
+        try {
+            URI uri = URI.create(endpoint.trim());
+            if (uri.getScheme() == null || uri.getHost() == null) {
+                return "";
+            }
+            return uri.getScheme() + "://" + uri.getHost()
+                    + (uri.getPort() > 0 ? ":" + uri.getPort() : "");
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
+    }
+
+    private static boolean blank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private static String shortText(String text) {
+        if (text == null) return "";
+        return text.length() <= 200 ? text : text.substring(0, 200) + "…";
     }
 }

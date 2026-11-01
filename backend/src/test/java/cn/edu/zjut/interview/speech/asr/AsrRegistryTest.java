@@ -21,7 +21,16 @@ class AsrRegistryTest {
 
     /** 构造顺序与期望顺序完全相反，任何「靠注入顺序」的实现都会在这里翻车。 */
     private static AsrRegistry shuffledRegistry() {
-        return new AsrRegistry(List.of(new MockAsrProvider(), new LlamaAsrProvider(), new QwenAsrProvider()));
+        AsrSettingsService settings = new AsrSettingsService(null, null) {
+            @Override
+            public AsrSettings load() {
+                return AsrSettings.defaults();
+            }
+        };
+        return new AsrRegistry(List.of(
+                new MockAsrProvider(),
+                new LlamaAsrProvider(settings),
+                new QwenAsrProvider(settings)));
     }
 
     @Test
