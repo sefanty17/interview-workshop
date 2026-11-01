@@ -218,6 +218,8 @@ ALTER TABLE interviewer       ADD COLUMN IF NOT EXISTS system_prompt_example_old
 ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS reply_length_mode VARCHAR(16) DEFAULT 'normal';
 -- 剧本编辑器：覆盖前留最近一份备份（对齐原版 <章节目录>.yaml.bak 的语义）
 ALTER TABLE interview_chapter ADD COLUMN IF NOT EXISTS events_backup CLOB;
+-- 舞台媒体状态快照（issue #13：背景/特效/BGM/音效/环境音/展示图片），JSON 字符串
+ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS media_state CLOB;
 
 -- ============ 剧本编辑器 AI 助手 · 会话（规格 E7a1，对齐 skill_agent_conversation）============
 -- 对应原版 crates/ling-chat-main/src/db/entities/skill_agent_conversation.rs：

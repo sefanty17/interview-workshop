@@ -3,6 +3,7 @@ package cn.edu.zjut.interview.engine.events;
 import cn.edu.zjut.interview.engine.EngineContext;
 import cn.edu.zjut.interview.engine.ScriptEvent;
 import cn.edu.zjut.interview.engine.payload.BackgroundEffectPayload;
+import cn.edu.zjut.interview.media.MediaStateStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,6 +55,7 @@ public class BackgroundEffectEvent implements ScriptEvent {
             }
         }
 
+        MediaStateStore.applyBackgroundEffect(ctx.session(), ctx.objectMapper(), effect);
         ctx.sink().backgroundEffect(new BackgroundEffectPayload(effect, ScriptEvent.parseDuration(event)));
         return null;
     }

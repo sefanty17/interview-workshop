@@ -3,6 +3,7 @@ package cn.edu.zjut.interview.engine.events;
 import cn.edu.zjut.interview.engine.EngineContext;
 import cn.edu.zjut.interview.engine.ScriptEvent;
 import cn.edu.zjut.interview.engine.payload.MusicPayload;
+import cn.edu.zjut.interview.media.MediaStateStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,7 +15,8 @@ import org.slf4j.LoggerFactory;
  * {@code game_status.background_music} → emit {@code script:music}
  * （{@code MusicPayload{musicPath, playbackSpeed?, duration?}}）。
  *
- * <p>本项目路径原样下发（前端用 HTMLAudio 播放），不保存 BGM 状态。
+ * <p>本项目路径原样下发（前端用 HTMLAudio 播放）；当前 BGM 写进
+ * {@code interview_session.media_state}（issue #13），刷新后可恢复。
  */
 public class MusicEvent implements ScriptEvent {
 
@@ -30,6 +32,7 @@ public class MusicEvent implements ScriptEvent {
                 ? event.get("playbackSpeed").asDouble()
                 : null;
 
+        MediaStateStore.applyMusic(ctx.session(), ctx.objectMapper(), musicPath, playbackSpeed);
         ctx.sink().music(new MusicPayload(musicPath, playbackSpeed, ScriptEvent.parseDuration(event)));
         log.info("[MusicEvent] BGM: {}", musicPath);
         return null;

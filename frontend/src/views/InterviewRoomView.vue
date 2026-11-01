@@ -148,6 +148,12 @@ import {
   type RoomLine,
 } from "../store/roomStore";
 import { attachRoomAudio } from "../store/roomAudio";
+import {
+  applyMediaState,
+  forgetActiveSession,
+  readActiveSession,
+  rememberActiveSession,
+} from "../store/mediaRestore";
 import Icon from "../components/base/widget/Icon.vue";
 import { applyPendingChoice, runScriptStream } from "../composables/useScriptRunner";
 import { useVoicePlayback } from "../composables/useVoicePlayback";
@@ -410,6 +416,26 @@ const scriptProgressPct = ref(0);
 async function ensureServerSession(): Promise<boolean> {
   if (sessionId.value !== null) return true;
   if (!(await isBackendUp())) return false;
+
+  // 刷新 / 重新进房间：先找回上一场仍在进行中的后端场次。
+  // 之前每次都新建，刷新后背景与 BGM 无从恢复（issue #13 的验收点）。
+  // 只在「本地已有对话历史」时续跑：从首页全新开一场时不能把旧场次认成新的。
+  const active = readActiveSession();
+  if (active && store.session.messages.length > 1) {
+    try {
+      const detail = await fetchSessionDetail(active.sessionId);
+      if (detail.status === "running") {
+        sessionId.value = detail.id;
+        boundScriptCode.value = detail.scriptCode ?? null;
+        applyMediaState(detail.mediaState);
+        return true;
+      }
+    } catch {
+      /* 场次已被删除 / 后端重启后清库：落到下面新建 */
+    }
+    forgetActiveSession();
+  }
+
   try {
     // 剧本模式带上「剧本冒险」里选中的剧本 code；自由模式不传（后端不再按岗位自动绑剧本）
     const scriptMode = store.session.mode === "script";
@@ -426,6 +452,8 @@ async function ensureServerSession(): Promise<boolean> {
     });
     sessionId.value = result.sessionId;
     boundScriptCode.value = scriptCode ?? null;
+    // 记住这一场：刷新后靠它续回同一个后端场次（媒体状态 / 章节进度都挂在它上面）
+    rememberActiveSession(result.sessionId, scriptCode ?? null);
     // 开场白以刚建出来的场次为准（startSession 会先在本地塞一条同文案的开场，这里换成后端的）
     const seededOpeningOnly =
       store.session.messages.length === 1 &&
@@ -611,7 +639,9 @@ async function enterScriptScene(): Promise<void> {
     return;
   }
 
-  // 刷新续跑：本地 syncRoomFromSession 的结果为准，不重放，也不自动开演
+  // 刷新续跑：把后端快照里的背景 / 特效 / BGM / 环境音 / 浮层拨回事件切换时的样子，
+  // 再停在输入态等用户发言（不重放，也不自动开演）
+  applyMediaState(detail?.mediaState);
   roomStore.state = "input";
 }
 
@@ -716,6 +746,8 @@ async function finish() {
   // clearSession() 会清掉本地会话缓存，先把场次 id 取出来，跳转时要拼进 ?sid=
   const sid = sessionId.value;
   clearSession();
+  // 这一场已经结束：别让下次进房间把它当成「还在进行中的场次」续回来
+  forgetActiveSession();
 
   // 后端已建场次：记录由后端统一提供，本地不再写一份，否则「面试记录」里同一场会出现两条
   // （一条后端真实场次、一条本地 mock 分条目）。作答不足 3 轮时带 noeval=1，报告页不跑 AI 评估，分数保持 0。
