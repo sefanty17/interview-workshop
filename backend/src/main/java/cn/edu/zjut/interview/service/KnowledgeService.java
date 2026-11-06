@@ -6,6 +6,7 @@ import cn.edu.zjut.interview.domain.KnowledgeDoc;
 import cn.edu.zjut.interview.domain.KnowledgeVector;
 import cn.edu.zjut.interview.dto.ChunkCommand;
 import cn.edu.zjut.interview.dto.CreateDocCommand;
+import cn.edu.zjut.interview.dto.KnowledgeChunkView;
 import cn.edu.zjut.interview.dto.KnowledgeDocView;
 import cn.edu.zjut.interview.knowledge.EmbeddingProvider;
 import cn.edu.zjut.interview.knowledge.KnowledgeIndexVersion;
@@ -62,12 +63,28 @@ public class KnowledgeService {
         this.indexVersion = indexVersion;
     }
 
+    /** 文档 code 的合法格式：小写字母/数字开头，后续允许小写、数字、点、下划线、短横线。 */
+    private static final java.util.regex.Pattern DOC_CODE_PATTERN =
+            java.util.regex.Pattern.compile("[a-z0-9][a-z0-9._-]*");
+
+    /** 校验文档 code 格式；不合法直接 400，前端据此给具体中文提示。 */
+    private static void requireValidCode(String docCode) {
+        if (docCode == null || docCode.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "文档 code 不能为空");
+        }
+        if (!DOC_CODE_PATTERN.matcher(docCode).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "文档 code 只能包含小写字母、数字、点、下划线、短横线，且以字母或数字开头：" + docCode);
+        }
+    }
+
     /** 建文档；code 已存在抛 409 —— 幂等交给调用方（脚本按 code upsert）。 */
     @Transactional
     public KnowledgeDocView createDoc(CreateDocCommand cmd) {
-        if (cmd == null || cmd.code() == null || cmd.code().isBlank()) {
+        if (cmd == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "文档 code 不能为空");
         }
+        requireValidCode(cmd.code());
         if (cmd.title() == null || cmd.title().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "文档 title 不能为空");
         }
@@ -231,9 +248,35 @@ public class KnowledgeService {
     @Transactional
     public ChunkSyncResult importMarkdown(String docCode, String title, String category,
                                           String sourcePath, String markdown) {
-        if (docCode == null || docCode.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "文档 code 不能为空");
+        upsertDoc(docCode, title, category, sourcePath);
+        return syncChunks(docCode, commandsOf(MarkdownChunker.chunk(markdown)));
+    }
+
+    /**
+     * 前端上传纯文本（.txt）：切分规则退化成「按空行分段、超长再合段」，
+     * 与 markdown 的标题切分共用同一套 {@code syncChunks} 增量同步。
+     *
+     * <p>纯文本没有 {@code #}/{@code ##}，硬套 markdown 切分只会得到「整篇一个片段」，
+     * 一份几千字的 txt 就永远只能整段命中、整段注入。
+     */
+    @Transactional
+    public ChunkSyncResult importText(String docCode, String title, String category,
+                                      String sourcePath, String text) {
+        upsertDoc(docCode, title, category, sourcePath);
+        return syncChunks(docCode, commandsOf(MarkdownChunker.chunkPlainText(text)));
+    }
+
+    private static List<ChunkCommand> commandsOf(List<MarkdownChunker.Chunk> chunks) {
+        List<ChunkCommand> commands = new ArrayList<>(chunks.size());
+        for (MarkdownChunker.Chunk chunk : chunks) {
+            commands.add(new ChunkCommand(chunk.heading(), chunk.text()));
         }
+        return commands;
+    }
+
+    /** 建或更新文档元信息；只覆盖传了值的字段，前端改标题不该把分类清空。 */
+    private KnowledgeDoc upsertDoc(String docCode, String title, String category, String sourcePath) {
+        requireValidCode(docCode);
         KnowledgeDoc doc = docRepository.findByCode(docCode).orElse(null);
         if (doc == null) {
             if (title == null || title.isBlank()) {
@@ -249,24 +292,30 @@ public class KnowledgeService {
             doc.setCreatedAt(now);
             doc.setUpdatedAt(now);
             docRepository.save(doc);
-        } else {
-            // 只更新传了值的字段：前端改标题不该把分类清空
-            if (title != null && !title.isBlank()) {
-                doc.setTitle(title);
-            }
-            if (category != null && !category.isBlank()) {
-                doc.setCategory(category);
-            }
-            if (sourcePath != null && !sourcePath.isBlank()) {
-                doc.setSourcePath(sourcePath);
-            }
+            return doc;
         }
+        if (title != null && !title.isBlank()) {
+            doc.setTitle(title);
+        }
+        if (category != null && !category.isBlank()) {
+            doc.setCategory(category);
+        }
+        if (sourcePath != null && !sourcePath.isBlank()) {
+            doc.setSourcePath(sourcePath);
+        }
+        return doc;
+    }
 
-        List<ChunkCommand> commands = new ArrayList<>();
-        for (MarkdownChunker.Chunk chunk : MarkdownChunker.chunk(markdown)) {
-            commands.add(new ChunkCommand(chunk.heading(), chunk.text()));
+    /** 文档的切块列表（位置 + 内容），前端「切块预览」与演示用。 */
+    @Transactional(readOnly = true)
+    public List<KnowledgeChunkView> listChunks(String docCode) {
+        KnowledgeDoc doc = requireDoc(docCode);
+        List<KnowledgeChunk> chunks = chunkRepository.findByDocIdOrderByChunkIndexAsc(doc.getId());
+        List<KnowledgeChunkView> views = new ArrayList<>(chunks.size());
+        for (KnowledgeChunk chunk : chunks) {
+            views.add(KnowledgeChunkView.of(chunk));
         }
-        return syncChunks(docCode, commands);
+        return views;
     }
 
     private static String headingOf(ChunkCommand cmd) {

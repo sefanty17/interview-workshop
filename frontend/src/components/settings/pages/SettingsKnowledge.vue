@@ -55,8 +55,8 @@
         </div>
       </MenuItem>
 
-      <!-- ========== 上传 Markdown ========== -->
-      <MenuItem title="上传 Markdown">
+      <!-- ========== 上传 Markdown / TXT ========== -->
+      <MenuItem title="上传 Markdown / TXT">
         <template #header>
           <Upload :size="20" />
         </template>
@@ -68,7 +68,7 @@
           <input
             ref="fileInput"
             type="file"
-            accept=".md,.markdown,text/markdown"
+            accept=".md,.markdown,.txt,text/markdown,text/plain"
             class="text-xs text-white/60"
             @change="onFileChange"
           />
@@ -78,7 +78,7 @@
             </button>
           </div>
           <p class="text-[11px] leading-relaxed text-white/40">
-            切分规则与导入脚本一致（按 # / ## 切，超 900 字二次切）；内容没变的片段不会重算向量。
+            Markdown 按 # / ## 标题切块；TXT 按空行分段切块，超 900 字再合段；内容没变的片段不会重算向量。
           </p>
         </div>
       </MenuItem>
@@ -154,6 +154,7 @@ import {
   reindexDoc,
   searchKnowledge,
   uploadMarkdown,
+  uploadText,
   type KnowledgeDocView,
   type KnowledgeSearchResult,
 } from "../../../api/knowledge";
@@ -234,13 +235,16 @@ const submit = async () => {
   if (!picked || !form.code.trim() || uploading.value) return;
   uploading.value = true;
   try {
-    const markdown = await picked.text();
-    const result = await uploadMarkdown(form.code.trim(), {
+    const text = await picked.text();
+    const meta = {
       title: form.title.trim() || undefined,
       category: form.category.trim() || undefined,
       sourcePath: picked.name,
-      markdown,
-    });
+    };
+    // 后缀决定切分规则：txt 按空行分段，md 按标题层级
+    const result = /\.(txt|text)$/i.test(picked.name)
+      ? await uploadText(form.code.trim(), { ...meta, text })
+      : await uploadMarkdown(form.code.trim(), { ...meta, markdown: text });
     notify(`已导入 ${result.count} 片段（新增 ${result.inserted} / 复用 ${result.reused}）`);
     // 清空表单：文件框的值只能直接改 DOM 才能重置
     form.code = "";

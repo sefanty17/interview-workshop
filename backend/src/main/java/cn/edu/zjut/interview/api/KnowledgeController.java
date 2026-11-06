@@ -2,6 +2,7 @@ package cn.edu.zjut.interview.api;
 
 import cn.edu.zjut.interview.dto.ChunkCommand;
 import cn.edu.zjut.interview.dto.CreateDocCommand;
+import cn.edu.zjut.interview.dto.KnowledgeChunkView;
 import cn.edu.zjut.interview.dto.KnowledgeDocView;
 import cn.edu.zjut.interview.dto.KnowledgeHit;
 import cn.edu.zjut.interview.knowledge.EmbeddingProvider;
@@ -78,6 +79,12 @@ public class KnowledgeController {
         return service.getDoc(code);
     }
 
+    /** 切块列表：位置（chunkIndex）+ 内容，前端预览与演示用。 */
+    @GetMapping("/knowledge/docs/{code}/chunks")
+    public List<KnowledgeChunkView> listChunks(@PathVariable String code) {
+        return service.listChunks(code);
+    }
+
     @DeleteMapping("/knowledge/docs/{code}")
     public ResponseEntity<Void> deleteDoc(@PathVariable String code) {
         service.deleteDoc(code);
@@ -114,6 +121,24 @@ public class KnowledgeController {
         }
         KnowledgeService.ChunkSyncResult result = service.importMarkdown(
                 code, request.title(), request.category(), request.sourcePath(), request.markdown());
+        return new SyncView(result.total(), result.reused(), result.inserted(),
+                result.deleted(), result.reembedded());
+    }
+
+    /**
+     * 上传一篇纯文本（.txt）：按空行分段切块，其余流程与 markdown 上传一致。
+     *
+     * <p>单独开一个端点而不是给 markdown 端点加 format 参数：两条切分规则的输入语义不同，
+     * 混在一个 body 里以后想加 {@code .docx} 之类的格式会越来越难读。
+     */
+    @PostMapping("/knowledge/docs/{code}/text")
+    public SyncView uploadText(@PathVariable String code,
+                               @RequestBody(required = false) TextRequest request) {
+        if (request == null || request.text() == null || request.text().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "文本内容不能为空");
+        }
+        KnowledgeService.ChunkSyncResult result = service.importText(
+                code, request.title(), request.category(), request.sourcePath(), request.text());
         return new SyncView(result.total(), result.reused(), result.inserted(),
                 result.deleted(), result.reembedded());
     }
@@ -215,6 +240,10 @@ public class KnowledgeController {
 
     /** 上传 markdown 的请求体：markdown 是原文，切分由后端做。 */
     public record MarkdownRequest(String title, String category, String sourcePath, String markdown) {
+    }
+
+    /** 上传纯文本的请求体：与 markdown 同形，只是原文按空行切块。 */
+    public record TextRequest(String title, String category, String sourcePath, String text) {
     }
 
     public record DocCodesRequest(List<String> docCodes) {

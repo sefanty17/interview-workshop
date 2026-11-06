@@ -187,6 +187,38 @@ class RetrievalServiceTest {
                 "结果只应来自挂载的那一篇：" + mounted);
     }
 
+    /** 6b. 解绑一本书后，该书条目立即不再命中（范围每次按当前挂载计算，不缓存）。 */
+    @Test
+    void 解绑一本书后该书条目立即不再命中() {
+        knowledgeService.setDocCodesOf(ROLE, List.of(JVM_DOC, DB_DOC));
+
+        List<KnowledgeHit> before = retrievalService.search("垃圾回收器", ROLE, "java",
+                RetrievalService.SearchOptions.defaults(), RetrievalService.RetrievalMode.HYBRID);
+        assertFalse(before.isEmpty(), "两本都绑定时应能命中 JVM 那本");
+        assertTrue(before.stream().allMatch(hit -> JVM_DOC.equals(hit.docCode())),
+                "命中结果只应来自 JVM 文档：" + before);
+
+        // 只解绑 JVM 那本，保留 DB；同一句查询必须立刻落空
+        knowledgeService.setDocCodesOf(ROLE, List.of(DB_DOC));
+        assertTrue(retrievalService.search("垃圾回收器", ROLE, "java",
+                        RetrievalService.SearchOptions.defaults(), RetrievalService.RetrievalMode.HYBRID).isEmpty(),
+                "解绑后 JVM 文档仍被检索到，说明挂载范围没有立即生效");
+    }
+
+    /** 6c. 角色一本没挂时范围必须为空：不能回落成整库，否则 B 会命中 A 的书。 */
+    @Test
+    void 零绑定角色的检索范围为空() {
+        knowledgeService.setDocCodesOf(ROLE, List.of());
+
+        assertEquals(0, retrievalService.scopeSize(ROLE, "java"), "零绑定的角色不该有任何检索范围");
+        assertTrue(retrievalService.search("垃圾回收器", ROLE, "java",
+                        RetrievalService.SearchOptions.defaults(), RetrievalService.RetrievalMode.HYBRID).isEmpty(),
+                "零绑定的角色不应命中任何片段");
+
+        // 不传角色的试搜/评测仍按岗位过滤，不受上面这条规则影响
+        assertEquals(2, retrievalService.scopeSize(null, "frontend"));
+    }
+
     /** 7. 版本失效：先查一次把索引缓存住，写入新片段后必须能立刻检索到。 */
     @Test
     void 写入新片段后缓存立即失效() {

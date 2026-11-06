@@ -27,7 +27,7 @@ public final class RetrievalIndex {
      * <p>{@code hype} 是 K6 的假设问题，<b>只进词表与向量，不进检索结果</b>
      * （结果里的 text 要原样拼提示词，掺进模型生成的问题会让面试官念错东西）。
      */
-    public record Doc(long chunkId, long docId, String docCode, String docTitle,
+    public record Doc(long chunkId, long docId, String docCode, String docTitle, int chunkIndex,
                       String heading, String text, String hype) {
     }
 

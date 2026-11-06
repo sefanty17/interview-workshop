@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -30,6 +31,8 @@ class KnowledgeControllerTest {
     private static final String CODE = "k1-ctrl-doc";
     /** K6 用另一篇文档，免得和上面那条用例互相污染。 */
     private static final String HYPE_CODE = "k6-ctrl-hype";
+    /** .txt 上传走独立端点，单独一篇文档。 */
+    private static final String TEXT_CODE = "k1-ctrl-text";
 
     @Autowired
     private MockMvc mockMvc;
@@ -38,6 +41,40 @@ class KnowledgeControllerTest {
     void 清理用例数据() throws Exception {
         mockMvc.perform(delete("/api/knowledge/docs/" + CODE));
         mockMvc.perform(delete("/api/knowledge/docs/" + HYPE_CODE));
+        mockMvc.perform(delete("/api/knowledge/docs/" + TEXT_CODE));
+    }
+
+    /** 纯文本上传：按空行切块后，片段接口能按 chunkIndex 列出位置与内容。 */
+    @Test
+    void 上传纯文本后能按序号列出切块() throws Exception {
+        String paragraph = "MySQL 索引的最左前缀原则要求查询从联合索引的第一列开始匹配，否则后面的列无法用上索引。";
+        String text = String.join("\n\n", java.util.Collections.nCopies(26, paragraph))
+                .replace("\n", "\\n");
+
+        mockMvc.perform(post("/api/knowledge/docs/" + TEXT_CODE + "/text")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"MySQL 索引笔记\",\"category\":\"java\","
+                                + "\"sourcePath\":\"notes.txt\",\"text\":\"" + text + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(2));
+
+        mockMvc.perform(get("/api/knowledge/docs/" + TEXT_CODE + "/chunks"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].chunkIndex").value(0))
+                .andExpect(jsonPath("$[0].heading", containsString("MySQL 索引的最左前缀")))
+                .andExpect(jsonPath("$[0].text", containsString("最左前缀")))
+                .andExpect(jsonPath("$[1].chunkIndex").value(1));
+    }
+
+    /** 非法 code 的 400 必须带中文 detail，前端才能显示具体原因。 */
+    @Test
+    void 非法code返回带中文detail的400() throws Exception {
+        mockMvc.perform(post("/api/knowledge/docs/Bad_Code/text")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"x\",\"text\":\"abc\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail", containsString("文档 code 只能包含")));
     }
 
     @Test

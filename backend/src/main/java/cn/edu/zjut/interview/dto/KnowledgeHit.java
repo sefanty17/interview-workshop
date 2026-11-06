@@ -12,6 +12,7 @@ public record KnowledgeHit(
         long docId,
         String docCode,
         String docTitle,
+        int chunkIndex,
         String heading,
         String text,
         double score,

@@ -85,6 +85,17 @@ class KnowledgeServiceTest {
         assertNotNull(listed.updatedAt());
     }
 
+    /** 非法 code 必须给可读的中文 400，而不是 500 / 英文异常。 */
+    @Test
+    void 非法文档code返回中文400() {
+        var error = org.junit.jupiter.api.Assertions.assertThrows(
+                org.springframework.web.server.ResponseStatusException.class,
+                () -> service.createDoc(new CreateDocCommand("Bad Code", "非法编码", null, null, null)));
+        assertEquals(400, error.getStatusCode().value());
+        assertTrue(error.getReason().contains("文档 code 只能包含"),
+                "错误文案必须是可读的中文说明：" + error.getReason());
+    }
+
     /** 6. 写 3 条片段 => chunkCount/vectorCount 都是 3，维度与模型来自 hashing 实现。 */
     @Test
     void 写三条片段后同时生成三条向量() {

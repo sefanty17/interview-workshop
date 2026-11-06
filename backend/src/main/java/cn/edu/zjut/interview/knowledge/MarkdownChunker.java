@@ -67,6 +67,33 @@ public final class MarkdownChunker {
         return chunks;
     }
 
+    /**
+     * 纯文本切分（.txt）：没有标题层级可用，退化成「按空行分段，再按 {@link #MAX_CHUNK_CHARS} 合段」。
+     *
+     * <p>每段的 heading 取首行截断——纯文本没有面包屑，但检索结果与日志里总得有个能看的位置标识，
+     * 首行通常就是这段在讲什么。
+     */
+    public static List<Chunk> chunkPlainText(String text) {
+        List<Chunk> chunks = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return chunks;
+        }
+        String normalized = text.replace("\r\n", "\n").strip();
+        for (Chunk part : splitLong("", normalized)) {
+            chunks.add(new Chunk(plainHeadingOf(part.text()), part.text()));
+        }
+        return chunks;
+    }
+
+    /** 纯文本片段的首行摘要，超过 40 字截断，避免 heading 把检索界面撑爆。 */
+    private static String plainHeadingOf(String body) {
+        String firstLine = body.strip().split("\n", 2)[0].strip();
+        if (firstLine.length() <= 40) {
+            return firstLine;
+        }
+        return firstLine.substring(0, 40) + "…";
+    }
+
     private static void flush(List<String[]> sections, StringBuilder buffer, String h1, String h2) {
         String body = buffer.toString().strip();
         buffer.setLength(0);

@@ -69,6 +69,46 @@ class MarkdownChunkerTest {
         assertTrue(MarkdownChunker.chunk(null).isEmpty());
     }
 
+    /** txt 没有标题：按空行分段，段首行当 heading，超长再按 MAX 合段。 */
+    @Test
+    void 纯文本按空行切块且首行作为标题() {
+        String text = """
+                MySQL 的聚簇索引把主键和数据行放在一棵 B+ 树上。
+
+                回表发生在二级索引只拿到主键、还要再查一次聚簇索引的时候。
+
+                覆盖索引可以把回表省掉。
+                """;
+
+        List<MarkdownChunker.Chunk> chunks = MarkdownChunker.chunkPlainText(text);
+
+        assertEquals(1, chunks.size(), "三段短文合计不足 900 字，应合成一段");
+        assertEquals("MySQL 的聚簇索引把主键和数据行放在一棵 B+ 树上。", chunks.get(0).heading());
+        assertTrue(chunks.get(0).text().contains("覆盖索引"), "合段后仍要包含后面的正文");
+    }
+
+    @Test
+    void 超长纯文本会按空行二次切块() {
+        String paragraph = "这一小节专门讲联合索引的最左前缀原则，以及范围查询为什么会让后面的列失效。";
+        String text = String.join("\n\n", java.util.Collections.nCopies(30, paragraph));
+
+        List<MarkdownChunker.Chunk> chunks = MarkdownChunker.chunkPlainText(text);
+
+        assertTrue(chunks.size() > 1, "30 段 × 40 字必须被切开");
+        for (MarkdownChunker.Chunk chunk : chunks) {
+            assertTrue(chunk.text().length() <= MarkdownChunker.MAX_CHUNK_CHARS + 50,
+                    "切开后仍超长：" + chunk.text().length());
+            assertTrue(chunk.heading().startsWith("这一小节"), "标题取每段首行");
+        }
+    }
+
+    @Test
+    void 空纯文本切成零段() {
+        assertTrue(MarkdownChunker.chunkPlainText("").isEmpty());
+        assertTrue(MarkdownChunker.chunkPlainText("   \n\n  ").isEmpty());
+        assertTrue(MarkdownChunker.chunkPlainText(null).isEmpty());
+    }
+
     /**
      * 拿仓库里的真实语料做回归：这篇 md 用 Python 脚本切出 4 段（见 --dry-run 输出），
      * Java 侧也必须是 4 段、且第一段落在「运行时内存区域划分」。

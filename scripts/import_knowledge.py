@@ -13,9 +13,10 @@
 
 用法：
     python scripts/import_knowledge.py --dry-run          # 只看切分结果，不写库
-    python scripts/import_knowledge.py                     # 全量导入
+    python scripts/import_knowledge.py                     # 全量导入，不自动绑定任何角色
     python scripts/import_knowledge.py --force             # 忽略指纹强制重传
     python scripts/import_knowledge.py --role strict,expert  # 导入后挂到角色卡
+    python scripts/import_knowledge.py --seed-bindings     # 额外挂演示用初始绑定（默认关）
     python scripts/import_knowledge.py --selftest          # 只跑切分逻辑断言，不需要后端
 """
 
@@ -40,6 +41,14 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DIR = ROOT / "data" / "knowledge"
 INDEX_FILE = DEFAULT_DIR / ".knowledge-index.json"
 DEFAULT_API = "http://127.0.0.1:8080"
+
+# 演示用初始绑定（默认不写入）：知识库导入后角色保持「未绑定」，由前端角色卡里的
+# 多选下拉框显式挂载。只有显式传 --seed-bindings 时才写，且只在角色「当前没有任何绑定」时写入，
+# 已有绑定一律不动 —— 否则用户解绑后重跑导入会被悄悄挂回去。
+SEED_BINDINGS = {
+    "strict": ["java-spring-core", "java-jvm-memory"],
+    "pressure": ["java-mysql-index"],
+}
 
 
 # ---------------------------------------------------------------- 切分
@@ -214,6 +223,29 @@ def merge_roles(api, role_codes, doc_codes):
         print(f"  角色 {role}：{len(existing)} → {len(merged)} 篇")
 
 
+def seed_bindings(api, available_codes):
+    """首次导入时给演示角色建立初始绑定。
+
+    只处理「当前绑定为空」的角色：已经有绑定的角色说明用户选过，不能覆盖。
+    指定文档还没导入时跳过该角色，等下一次导入再补。
+    """
+    for role, wanted in SEED_BINDINGS.items():
+        codes = [c for c in wanted if c in available_codes]
+        if not codes:
+            continue
+        status, body = http_json("GET", f"{api}/api/interviewers/{role}/knowledge")
+        if status != 200:
+            raise SystemExit(f"读取角色绑定失败 {role}：HTTP {status}")
+        existing = body.get("docCodes", []) if isinstance(body, dict) else []
+        if existing:
+            print(f"  角色 {role} 已有绑定，跳过初始绑定")
+            continue
+        status, _ = http_json("PUT", f"{api}/api/interviewers/{role}/knowledge", {"docCodes": codes})
+        if status not in (200, 204):
+            raise SystemExit(f"初始绑定失败 {role}：HTTP {status}")
+        print(f"  角色 {role} 初始绑定 {len(codes)} 篇：{', '.join(codes)}")
+
+
 def run_selftest():
     """切分逻辑自测：不需要后端。断言的是「行为」不是「不报错」。"""
     md = """# 测试文档
@@ -258,6 +290,8 @@ def main():
     ap.add_argument("--dir", default=str(DEFAULT_DIR))
     ap.add_argument("--api", default=os.environ.get("KNOWLEDGE_API", DEFAULT_API))
     ap.add_argument("--role", default="", help="导入后挂到这些角色卡（逗号分隔）")
+    ap.add_argument("--seed-bindings", action=argparse.BooleanOptionalAction, default=False,
+                    help="额外挂演示用初始绑定（默认关；已有绑定不覆盖）")
     ap.add_argument("--force", action="store_true", help="忽略指纹，强制重传")
     ap.add_argument("--dry-run", action="store_true", help="只打印切分结果，不写库")
     ap.add_argument("--selftest", action="store_true", help="只跑切分自测")
@@ -313,6 +347,10 @@ def main():
     if roles and imported:
         print("挂到角色卡：")
         merge_roles(args.api, roles, imported)
+
+    if args.seed_bindings:
+        print("初始绑定角色知识库：")
+        seed_bindings(args.api, {code for code, *_ in docs})
 
     print(f"\n完成：导入 {len(imported)} 篇 / {total_chunks} 段，跳过 {len(skipped)} 篇")
     if imported:

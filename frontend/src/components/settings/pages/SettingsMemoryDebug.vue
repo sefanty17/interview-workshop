@@ -64,6 +64,137 @@
             </span>
           </div>
 
+          <!-- ④ 角色知识检索：真实后端，按角色绑定范围检索 -->
+          <div class="mb-4 rounded-xl border border-cyan-400/25 bg-cyan-400/5 p-4">
+            <div class="mb-3 flex flex-wrap items-center gap-2">
+              <h4 class="text-sm font-semibold text-white">角色知识检索</h4>
+              <span class="text-xs text-white/50">只在该角色当前绑定的文档内检索</span>
+              <select
+                v-model="knowledgeRoleCode"
+                class="glass-input ml-auto w-48 text-xs"
+                aria-label="选择要检索的面试官"
+                @change="onKnowledgeRoleChange"
+              >
+                <option v-if="knowledgeRoles.length === 0" value="">加载中…</option>
+                <option v-for="role in knowledgeRoles" :key="role.code" :value="role.code">
+                  {{ role.name }}（{{ role.code }}）
+                </option>
+              </select>
+            </div>
+
+            <p
+              v-if="knowledgeError"
+              class="mb-3 rounded-lg border border-red-400/40 bg-red-500/10 p-2 text-xs"
+            >
+              {{ knowledgeError }}
+            </p>
+
+            <div class="mb-3 flex flex-wrap items-center gap-1 text-xs">
+              <span class="text-white/50">已绑定：</span>
+              <span v-if="boundDocCodes.length === 0" class="text-amber-300">未绑定任何文档</span>
+              <span
+                v-for="code in boundDocCodes"
+                :key="code"
+                class="rounded border border-white/15 px-1.5 py-0.5 text-white/80"
+              >
+                {{ code }}
+              </span>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <input
+                v-model="knowledgeQuery"
+                class="glass-input min-w-[200px] flex-1"
+                placeholder="输入一个问题，看该角色会命中哪些书"
+                aria-label="角色知识检索问题"
+                @keydown.enter="runKnowledgeSearch"
+              />
+              <button
+                class="btn-sm shrink-0"
+                :disabled="knowledgeLoading || !knowledgeQuery.trim()"
+                @click="runKnowledgeSearch"
+              >
+                {{ knowledgeLoading ? "检索中…" : "检索" }}
+              </button>
+              <button class="btn-sm shrink-0" :disabled="knowledgeLoading" @click="refreshKnowledge">
+                刷新绑定
+              </button>
+            </div>
+
+            <p v-if="knowledgeScope !== null" class="mt-2 text-xs text-white/45">
+              检索范围 {{ knowledgeScope }} 个片段
+            </p>
+
+            <div v-if="knowledgeHits.length > 0" class="mt-2 space-y-2">
+              <div
+                v-for="hit in knowledgeHits"
+                :key="hit.chunkId"
+                class="rounded-lg border border-white/10 bg-black/20 p-2"
+              >
+                <p class="text-[11px] text-white/40">
+                  {{ hit.docCode }} · {{ hit.docTitle }} · chunk#{{ hit.chunkIndex }}
+                </p>
+                <p class="text-sm text-white/85">{{ hit.heading }}</p>
+                <p class="line-clamp-2 text-xs leading-relaxed text-white/50">{{ hit.text }}</p>
+                <p class="text-[11px] text-white/35">
+                  RRF {{ hit.score.toFixed(4) }} · 向量 {{ hit.vectorScore.toFixed(3) }} · BM25
+                  {{ hit.bm25Score.toFixed(2) }}
+                </p>
+              </div>
+            </div>
+            <p
+              v-else-if="knowledgeSearched && !knowledgeLoading"
+              class="mt-2 text-xs text-white/45"
+            >
+              没有命中（低于阈值就不注入）。
+            </p>
+
+            <!-- 切块预览：直接看到入库后每个片段的位置与内容 -->
+            <div class="mt-4 border-t border-white/10 pt-3">
+              <div class="flex flex-wrap items-center gap-2">
+                <h5 class="text-xs font-semibold text-white/70">切块预览</h5>
+                <span class="text-[11px] text-white/40">看某篇文档被切成了哪些片段</span>
+                <select
+                  v-model="previewCode"
+                  class="glass-input ml-auto w-56 text-xs"
+                  aria-label="选择要预览切块的文档"
+                >
+                  <option value="">选择文档</option>
+                  <option v-for="doc in knowledgeDocs" :key="doc.code" :value="doc.code">
+                    {{ doc.title }}（{{ doc.chunkCount }} 段）
+                  </option>
+                </select>
+                <button
+                  class="btn-sm shrink-0"
+                  :disabled="!previewCode || previewLoading"
+                  @click="loadChunkPreview"
+                >
+                  {{ previewLoading ? "读取中…" : "查看切块" }}
+                </button>
+              </div>
+
+              <div v-if="previewChunks.length > 0" class="mt-2 max-h-72 space-y-2 overflow-y-auto">
+                <div
+                  v-for="chunk in previewChunks"
+                  :key="chunk.chunkIndex"
+                  class="rounded-lg border border-white/10 bg-black/20 p-2"
+                >
+                  <p class="text-[11px] text-white/40">
+                    chunk#{{ chunk.chunkIndex }} · {{ chunk.charCount }} 字
+                  </p>
+                  <p class="text-xs text-white/80">{{ chunk.heading }}</p>
+                  <p class="line-clamp-3 text-[11px] leading-relaxed text-white/50">
+                    {{ chunk.text }}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <p class="mt-3 text-xs text-white/40">
+              绑定/解绑在「角色卡 → 岗位知识」的多选下拉里操作；解绑后回到本页点「刷新绑定」再检索，该书条目会立即消失。
+            </p>
+          </div>
+
           <p v-if="error" class="mb-4 rounded-lg border border-red-400/40 bg-red-500/10 p-3 text-sm">
             {{ error }}
           </p>
@@ -512,6 +643,20 @@ import {
   type MemoryImportance,
   type MemorySectionKey,
 } from "../../../data/mock";
+import {
+  getRoleKnowledge,
+  listDocChunks,
+  listKnowledgeDocs,
+  searchKnowledge,
+  type KnowledgeChunkView,
+  type KnowledgeDocView,
+  type KnowledgeHit,
+} from "../../../api/knowledge";
+
+interface KnowledgeRole {
+  code: string;
+  name: string;
+}
 
 /** 运行时生效值 = 底稿快照 + 本页可改的演示状态 */
 type MemoryRuntime = MemoryDebugSnapshot & { roleId: number };
@@ -557,6 +702,23 @@ const snapshot = ref<MemoryDebugSnapshot | null>(null);
 const selectedRoleId = ref<number | null>(null);
 const loading = ref(false);
 const error = ref("");
+
+/** 角色知识检索（真实后端） */
+const knowledgeRoles = ref<KnowledgeRole[]>([]);
+const knowledgeRoleCode = ref("");
+const boundDocCodes = ref<string[]>([]);
+const knowledgeQuery = ref("");
+const knowledgeHits = ref<KnowledgeHit[]>([]);
+const knowledgeScope = ref<number | null>(null);
+const knowledgeLoading = ref(false);
+const knowledgeError = ref("");
+const knowledgeSearched = ref(false);
+
+/** 切块预览（全部文档，不限于当前角色绑定） */
+const knowledgeDocs = ref<KnowledgeDocView[]>([]);
+const previewCode = ref("");
+const previewChunks = ref<KnowledgeChunkView[]>([]);
+const previewLoading = ref(false);
 
 const showStore = ref(true);
 const showInjected = ref(false);
@@ -831,6 +993,99 @@ async function rebuildIndex(): Promise<void> {
   await alertDialog("重建记忆索引", "需要后端服务，当前未接入");
 }
 
+// ---------- 角色知识检索 ----------
+
+async function fetchKnowledgeRoles(): Promise<KnowledgeRole[]> {
+  const response = await fetch("/api/interviewers");
+  if (!response.ok) throw new Error(`加载角色失败：HTTP ${response.status}`);
+  return (await response.json()) as KnowledgeRole[];
+}
+
+async function loadRoleBindings(): Promise<void> {
+  const code = knowledgeRoleCode.value;
+  if (!code) return;
+  boundDocCodes.value = await getRoleKnowledge(code);
+}
+
+async function loadKnowledgeRoles(): Promise<void> {
+  try {
+    const [roles, docs] = await Promise.all([fetchKnowledgeRoles(), listKnowledgeDocs()]);
+    knowledgeRoles.value = roles;
+    knowledgeDocs.value = docs;
+    const preferred = roles.find((role) => role.code === "strict") ?? roles[0];
+    if (preferred) {
+      knowledgeRoleCode.value = preferred.code;
+      await loadRoleBindings();
+    }
+  } catch (e) {
+    knowledgeError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function onKnowledgeRoleChange(): Promise<void> {
+  knowledgeHits.value = [];
+  knowledgeScope.value = null;
+  knowledgeSearched.value = false;
+  knowledgeError.value = "";
+  try {
+    await loadRoleBindings();
+  } catch (e) {
+    knowledgeError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function runKnowledgeSearch(): Promise<void> {
+  const q = knowledgeQuery.value.trim();
+  if (!q || !knowledgeRoleCode.value || knowledgeLoading.value) return;
+  knowledgeLoading.value = true;
+  knowledgeError.value = "";
+  knowledgeSearched.value = true;
+  try {
+    const result = await searchKnowledge(q, {
+      interviewerCode: knowledgeRoleCode.value,
+      mode: "hybrid",
+      topK: 5,
+    });
+    knowledgeHits.value = result.hits;
+    knowledgeScope.value = result.scopeSize;
+  } catch (e) {
+    knowledgeHits.value = [];
+    knowledgeScope.value = null;
+    knowledgeError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    knowledgeLoading.value = false;
+  }
+}
+
+async function refreshKnowledge(): Promise<void> {
+  knowledgeError.value = "";
+  try {
+    // 文档也可能刚在角色页新增，一并刷新，切块预览的下拉才能看到新文档
+    const [docs] = await Promise.all([listKnowledgeDocs(), loadRoleBindings()]);
+    knowledgeDocs.value = docs;
+  } catch (e) {
+    knowledgeError.value = e instanceof Error ? e.message : String(e);
+    return;
+  }
+  if (knowledgeQuery.value.trim()) await runKnowledgeSearch();
+}
+
+/** 读取某篇文档的切块：位置 + 内容，对应后端日志里的 chunk# */
+async function loadChunkPreview(): Promise<void> {
+  const code = previewCode.value;
+  if (!code || previewLoading.value) return;
+  previewLoading.value = true;
+  knowledgeError.value = "";
+  try {
+    previewChunks.value = await listDocChunks(code);
+  } catch (e) {
+    previewChunks.value = [];
+    knowledgeError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    previewLoading.value = false;
+  }
+}
+
 const loadSnapshot = (roleId: number) => {
   const base = memoryDebugSnapshots[roleId];
   if (!base) {
@@ -876,4 +1131,5 @@ const refreshAll = () => {
 };
 
 onMounted(refreshAll);
+onMounted(() => void loadKnowledgeRoles());
 </script>

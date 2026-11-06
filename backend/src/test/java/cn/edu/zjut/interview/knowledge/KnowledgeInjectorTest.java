@@ -36,7 +36,7 @@ class KnowledgeInjectorTest {
 
     private static KnowledgeHit hit(String heading, String text) {
         return new KnowledgeHit(7L, 3L, "java-jvm-memory", "Java 虚拟机内存与对象生命周期",
-                heading, text, 0.0325, 0.207, 8.51);
+                1, heading, text, 0.0325, 0.207, 8.51);
     }
 
     private void stubEnabled(int topK) {

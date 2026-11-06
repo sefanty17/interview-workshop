@@ -196,6 +196,8 @@ public class RetrievalService {
         RetrievalIndex index = currentIndex();
         List<Integer> scope = scopePositions(index, interviewerCode, jobCode);
         if (scope.isEmpty()) {
+            log.info("[Knowledge] 检索 query=\"{}\" interviewer={} job={} 范围为空（角色未绑定文档或文档被停用）",
+                    query, blankToDash(interviewerCode), blankToDash(jobCode));
             return List.of();
         }
 
@@ -240,9 +242,48 @@ public class RetrievalService {
             Candidate candidate = passed.get(i);
             RetrievalIndex.Doc doc = docs.get(candidate.position);
             hits.add(new KnowledgeHit(doc.chunkId(), doc.docId(), doc.docCode(), doc.docTitle(),
-                    doc.heading(), doc.text(), candidate.rrf, candidate.vectorScore, candidate.bm25Score));
+                    doc.chunkIndex(), doc.heading(), doc.text(),
+                    candidate.rrf, candidate.vectorScore, candidate.bm25Score));
         }
+        logHits(query, interviewerCode, jobCode, effective, scope.size(), hits);
         return hits;
+    }
+
+    /**
+     * 把这次命中写进日志：文档、片段序号、标题与正文前 160 字。
+     *
+     * <p>演示/排障时最常见的疑问是「答案是照着哪一段说的」，只给分数看不出位置；
+     * {@code chunkIndex} + {@code heading} 就能回到源文档定位，正文摘要足够核对内容。
+     */
+    private static void logHits(String query, String interviewerCode, String jobCode,
+                                RetrievalMode mode, int scopeSize, List<KnowledgeHit> hits) {
+        if (!log.isInfoEnabled()) {
+            return;
+        }
+        log.info("[Knowledge] 检索 query=\"{}\" interviewer={} job={} mode={} scope={} hits={}",
+                query, blankToDash(interviewerCode), blankToDash(jobCode), mode.wireName(),
+                scopeSize, hits.size());
+        for (int i = 0; i < hits.size(); i++) {
+            KnowledgeHit hit = hits.get(i);
+            log.info("[Knowledge]   #{} doc={} chunk#{} heading=\"{}\" rrf={} text=\"{}\"",
+                    i + 1, hit.docCode(), hit.chunkIndex(),
+                    hit.heading() == null ? "" : hit.heading(),
+                    String.format("%.4f", hit.score()),
+                    snippet(hit.text(), 160));
+        }
+    }
+
+    private static String blankToDash(String value) {
+        return value == null || value.isBlank() ? "-" : value;
+    }
+
+    /** 正文摘要：换行压成空格，超长加省略号，保证一条日志只占一行。 */
+    private static String snippet(String text, int limit) {
+        if (text == null) {
+            return "";
+        }
+        String flat = text.replaceAll("\\s+", " ").strip();
+        return flat.length() <= limit ? flat : flat.substring(0, limit) + "…";
     }
 
     /** 范围内片段数：前端「试搜」据此判断是不是根本没挂语料。 */
@@ -314,6 +355,7 @@ public class RetrievalService {
                 continue;
             }
             docs.add(new RetrievalIndex.Doc(chunk.getId(), doc.getId(), doc.getCode(), doc.getTitle(),
+                    chunk.getChunkIndex() == null ? -1 : chunk.getChunkIndex(),
                     chunk.getHeading(), chunk.getText(), chunk.getHypeQuestions()));
         }
 
@@ -351,28 +393,31 @@ public class RetrievalService {
     }
 
     /**
-     * 检索范围（先定范围再打分）：
-     * 角色挂载优先 → 岗位分类次之 → 都没有就是全部启用文档。
+     * 检索范围：传了角色 code 就只按挂载；没传时按岗位分类，仍没有就是全部启用文档。
      *
-     * <p>挂载非空但指向的文档全被停用时返回空集合（不再退化成「全部」），
-     * 否则「考官没配语料」会静默变成「用整库语料」，这是更难发现的错。
+     * <p><b>角色传了 code 时，范围只由挂载决定</b>：一本没挂就是空范围，绝不回落成「整库」。
+     * 否则「考官没配语料」会静默变成「用所有人的语料」，角色之间的知识边界就失效了。
+     * 只有调用方没传角色（纯试搜 / 评测脚本）时才按岗位或整库检索。
+     *
+     * <p>挂载指向的文档全被停用时同样返回空集合。
      */
     private Set<Long> scopeDocIds(String interviewerCode, String jobCode) {
         if (interviewerCode != null && !interviewerCode.isBlank()) {
             List<InterviewerKnowledge> mounts = mountRepository.findByInterviewerCode(interviewerCode);
-            if (!mounts.isEmpty()) {
-                List<Long> mountedIds = new ArrayList<>(mounts.size());
-                for (InterviewerKnowledge mount : mounts) {
-                    mountedIds.add(mount.getDocId());
-                }
-                Set<Long> enabled = new HashSet<>();
-                for (KnowledgeDoc doc : docRepository.findAllById(mountedIds)) {
-                    if (Boolean.TRUE.equals(doc.getEnabled())) {
-                        enabled.add(doc.getId());
-                    }
-                }
-                return enabled;
+            List<Long> mountedIds = new ArrayList<>(mounts.size());
+            for (InterviewerKnowledge mount : mounts) {
+                mountedIds.add(mount.getDocId());
             }
+            if (mountedIds.isEmpty()) {
+                return Set.of();
+            }
+            Set<Long> enabled = new HashSet<>();
+            for (KnowledgeDoc doc : docRepository.findAllById(mountedIds)) {
+                if (Boolean.TRUE.equals(doc.getEnabled())) {
+                    enabled.add(doc.getId());
+                }
+            }
+            return enabled;
         }
         boolean byJob = jobCode != null && !jobCode.isBlank();
         Set<Long> ids = new HashSet<>();

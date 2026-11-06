@@ -33,11 +33,21 @@ export interface KnowledgeHit {
   docId: number;
   docCode: string;
   docTitle: string;
+  /** 文档内片段序号（从 0 开始），与后端日志里的 chunk# 同一个值。 */
+  chunkIndex: number;
   heading: string;
   text: string;
   score: number;
   vectorScore: number;
   bm25Score: number;
+}
+
+/** 切块结果：位置 + 内容，供「切块预览」展示。 */
+export interface KnowledgeChunkView {
+  chunkIndex: number;
+  heading: string;
+  text: string;
+  charCount: number;
 }
 
 export interface KnowledgeSearchResult {
@@ -122,6 +132,34 @@ export async function reindexDoc(code: string): Promise<{ count: number }> {
     method: "POST",
   });
   return (await response.json()) as { count: number };
+}
+
+/**
+ * 上传一篇纯文本（.txt），后端按空行分段切块。
+ *
+ * 与 markdown 上传分成两个端点：切分规则不同，前端按文件后缀选函数。
+ */
+export async function uploadText(
+  code: string,
+  body: {
+    title?: string;
+    category?: string;
+    sourcePath?: string;
+    text: string;
+  },
+): Promise<ChunkSyncResult> {
+  const response = await request(`/api/knowledge/docs/${encodeURIComponent(code)}/text`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return (await response.json()) as ChunkSyncResult;
+}
+
+/** 某篇文档的切块列表（含位置），用于预览切分结果。 */
+export async function listDocChunks(code: string): Promise<KnowledgeChunkView[]> {
+  const response = await request(`/api/knowledge/docs/${encodeURIComponent(code)}/chunks`);
+  return (await response.json()) as KnowledgeChunkView[];
 }
 
 /** 删除文档（片段与向量由后端级联清理）。 */
